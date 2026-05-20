@@ -1,0 +1,1420 @@
+openapi: 3.1.0
+info:
+  title: HNAG API
+  version: 1.0.0
+  description: |
+    Hôm Nay Ăn Gì? — AI Food Discovery Platform API.
+    All endpoints return `{ success, data, error, meta }` envelope.
+  contact:
+    name: HNAG Engineering
+    email: dev@tothanhthuy.cloud
+servers:
+  - url: https://api.tothanhthuy.cloud/v1
+    description: Production
+  - url: https://api-stage.tothanhthuy.cloud/v1
+    description: Staging
+  - url: http://localhost:4000/v1
+    description: Local
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Users
+  - name: Onboarding
+  - name: AI
+  - name: Foods
+  - name: Restaurants
+  - name: Reviews
+  - name: Orders
+  - name: Fridge
+  - name: MealPlan
+  - name: Groups
+  - name: Social
+  - name: Notifications
+  - name: Subscription
+  - name: Search
+  - name: Geo
+
+paths:
+  # =============================================================
+  # AUTH
+  # =============================================================
+  /auth/otp/send:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Send OTP to Vietnamese phone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { type: string, example: "+84901234567" }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Envelope' } } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/otp/verify:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Verify OTP and return tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, code]
+              properties:
+                phone: { type: string }
+                code:  { type: string, example: "123456" }
+                device:
+                  $ref: '#/components/schemas/DeviceInfo'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: { $ref: '#/components/schemas/TokenPair' }
+
+  /auth/oauth/{provider}:
+    post:
+      tags: [Auth]
+      security: []
+      summary: OAuth sign-in (apple|google)
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string, enum: [apple, google] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idToken]
+              properties:
+                idToken: { type: string }
+                device:  { $ref: '#/components/schemas/DeviceInfo' }
+      responses:
+        '200': { $ref: '#/components/responses/TokenResponse' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/TokenResponse' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke current session
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # USERS
+  # =============================================================
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Current user profile + preferences + streaks
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: { $ref: '#/components/schemas/MeProfile' }
+    patch:
+      tags: [Users]
+      summary: Update profile or preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateMeRequest' }
+      responses: { '200': { description: OK } }
+    delete:
+      tags: [Users]
+      summary: Soft-delete account (30-day window)
+      responses: { '200': { description: OK } }
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Public profile of another user
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UserPublic' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /users/{id}/follow:
+    post:
+      tags: [Users]
+      summary: Follow user
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+    delete:
+      tags: [Users]
+      summary: Unfollow user
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # ONBOARDING
+  # =============================================================
+  /onboarding/food-dna:
+    post:
+      tags: [Onboarding]
+      summary: Submit initial food DNA survey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FoodDnaRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          embeddingHash: { type: string }
+                          initialSuggestions:
+                            type: array
+                            items: { $ref: '#/components/schemas/FoodCard' }
+
+  /onboarding/foods/grid:
+    get:
+      tags: [Onboarding]
+      summary: 60-image food grid for love/hate picker
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/FoodCompact' }
+
+  # =============================================================
+  # AI — CORE
+  # =============================================================
+  /ai/suggest:
+    post:
+      tags: [AI]
+      summary: Get personalized food suggestion cards
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AiSuggestRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: { $ref: '#/components/schemas/AiSuggestResponse' }
+        '402': { description: Free quota exceeded — upgrade to Premium }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /ai/feedback:
+    post:
+      tags: [AI]
+      summary: Send implicit feedback (swipe right/left/save)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, foodId, action]
+              properties:
+                sessionId: { type: string, format: uuid }
+                foodId:    { type: string, format: uuid }
+                action:    { type: string, enum: [view, save, skip, cook, order, dine, rate] }
+                rating:    { type: integer, minimum: 1, maximum: 5 }
+                reason:    { type: string, description: 'Optional skip reason' }
+      responses: { '200': { description: OK } }
+
+  /ai/refresh:
+    post:
+      tags: [AI]
+      summary: Re-roll same context (new candidates)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId: { type: string }
+      responses: { '200': { description: OK } }
+
+  /ai/voice:
+    post:
+      tags: [AI]
+      summary: Process voice query (Vietnamese)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                audio: { type: string, format: binary, description: 'PCM 16kHz mono' }
+                language: { type: string, default: 'vi' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          transcript: { type: string }
+                          intent:     { type: string }
+                          response:
+                            type: object
+                            properties:
+                              text:     { type: string }
+                              audioUrl: { type: string }
+                              cards:    { type: array, items: { $ref: '#/components/schemas/FoodCard' } }
+
+  /ai/mood:
+    post:
+      tags: [AI]
+      summary: Mood-based food suggestions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mood]
+              properties:
+                mood: { type: string, enum: [happy, sad, stress, lonely, chill, late_night, tired, rushed, broke] }
+                location: { $ref: '#/components/schemas/GeoPoint' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          theme:  { type: string }
+                          cards: { type: array, items: { $ref: '#/components/schemas/FoodCard' } }
+
+  /ai/fridge/scan:
+    post:
+      tags: [AI]
+      summary: Identify ingredients in fridge photo
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image: { type: string, format: binary }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/FridgeDetection' }
+
+  /ai/fridge/recipes:
+    post:
+      tags: [AI]
+      summary: Recipes from ingredient list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ingredients]
+              properties:
+                ingredients:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:     { type: string }
+                      quantity: { type: number }
+                      unit:     { type: string }
+                timeMin:    { type: integer, description: Available cooking minutes }
+                skill:      { type: string, enum: [basic, intermediate, pro] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          recipes: { type: array, items: { $ref: '#/components/schemas/Recipe' } }
+
+  /ai/match-link:
+    post:
+      tags: [AI]
+      summary: "Ăn gì giống video này?" — paste TikTok/IG link → restaurants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+                location: { $ref: '#/components/schemas/GeoPoint' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          detectedDish: { type: string }
+                          food:         { $ref: '#/components/schemas/FoodCompact' }
+                          restaurants:
+                            type: array
+                            items: { $ref: '#/components/schemas/RestaurantCompact' }
+
+  # =============================================================
+  # FOODS
+  # =============================================================
+  /foods:
+    get:
+      tags: [Foods]
+      summary: List foods (filters)
+      parameters:
+        - { in: query, name: cuisine,  schema: { type: string } }
+        - { in: query, name: category, schema: { type: string } }
+        - { in: query, name: diet,     schema: { type: string } }
+        - { in: query, name: maxPrice, schema: { type: integer } }
+        - { in: query, name: q,        schema: { type: string } }
+        - { in: query, name: page,     schema: { type: integer, default: 1 } }
+        - { in: query, name: limit,    schema: { type: integer, default: 20, maximum: 50 } }
+      responses: { '200': { description: OK } }
+
+  /foods/{id}:
+    get:
+      tags: [Foods]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: { $ref: '#/components/schemas/FoodDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /foods/{id}/restaurants:
+    get:
+      tags: [Foods]
+      summary: Restaurants serving this dish near user
+      parameters:
+        - { in: path,  name: id,     required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: lat,    required: true, schema: { type: number } }
+        - { in: query, name: lng,    required: true, schema: { type: number } }
+        - { in: query, name: radius, schema: { type: integer, default: 3000, description: meters } }
+      responses: { '200': { description: OK } }
+
+  /foods/trending:
+    get:
+      tags: [Foods]
+      summary: Trending foods (city, period)
+      parameters:
+        - { in: query, name: city,   schema: { type: string } }
+        - { in: query, name: period, schema: { type: string, enum: [day, week, month], default: week } }
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # RESTAURANTS
+  # =============================================================
+  /restaurants/nearby:
+    get:
+      tags: [Restaurants]
+      summary: Restaurants near user with filters
+      parameters:
+        - { in: query, name: lat,        required: true, schema: { type: number } }
+        - { in: query, name: lng,        required: true, schema: { type: number } }
+        - { in: query, name: radius,     schema: { type: integer, default: 3000 } }
+        - { in: query, name: openNow,    schema: { type: boolean } }
+        - { in: query, name: priceLevel, schema: { type: integer, enum: [1,2,3,4] } }
+        - { in: query, name: cuisine,    schema: { type: string } }
+        - { in: query, name: vibe,       schema: { type: string } }
+        - { in: query, name: minRating,  schema: { type: number } }
+      responses: { '200': { description: OK } }
+
+  /restaurants/{id}:
+    get:
+      tags: [Restaurants]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: { $ref: '#/components/schemas/RestaurantDetail' }
+
+  /restaurants/{id}/menu:
+    get:
+      tags: [Restaurants]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+
+  /restaurants/{id}/reviews:
+    get:
+      tags: [Restaurants]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: sort, schema: { type: string, enum: [recent, helpful, rating], default: recent } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # REVIEWS
+  # =============================================================
+  /reviews:
+    post:
+      tags: [Reviews]
+      summary: Create review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReview' }
+      responses: { '201': { description: Created } }
+
+  /reviews/{id}:
+    patch:
+      tags: [Reviews]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+    delete:
+      tags: [Reviews]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+
+  /reviews/{id}/helpful:
+    post:
+      tags: [Reviews]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # ORDERS (delivery aggregator intent)
+  # =============================================================
+  /orders/intent:
+    post:
+      tags: [Orders]
+      summary: Generate partner deeplink for an item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [foodId]
+              properties:
+                foodId:         { type: string, format: uuid }
+                restaurantId:   { type: string, format: uuid }
+                preferredPartner: { type: string, enum: [grabfood, shopeefood, befood, gojek] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          deeplink:    { type: string }
+                          partner:     { type: string }
+                          alternates:  { type: array, items: { type: object } }
+                          orderId:     { type: string, format: uuid }
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: My order history
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: page,   schema: { type: integer, default: 1 } }
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # FRIDGE
+  # =============================================================
+  /fridge:
+    get:
+      tags: [Fridge]
+      summary: My fridge inventory
+      responses: { '200': { description: OK } }
+    post:
+      tags: [Fridge]
+      summary: Add fridge item(s)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items: { $ref: '#/components/schemas/FridgeItemInput' }
+      responses: { '201': { description: Created } }
+
+  /fridge/{id}:
+    patch:
+      tags: [Fridge]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+    delete:
+      tags: [Fridge]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # MEAL PLAN
+  # =============================================================
+  /meal-plan:
+    get:
+      tags: [MealPlan]
+      summary: Get current week meal plan
+      parameters: [{ in: query, name: week, schema: { type: string, format: date } }]
+      responses: { '200': { description: OK } }
+    put:
+      tags: [MealPlan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MealPlanRequest' }
+      responses: { '200': { description: OK } }
+
+  /meal-plan/generate:
+    post:
+      tags: [MealPlan]
+      summary: AI auto-generate weekly plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                weekStart:    { type: string, format: date }
+                budgetTotal:  { type: integer }
+                calorieGoal:  { type: integer }
+                preferences:
+                  type: object
+                  additionalProperties: true
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # GROUPS
+  # =============================================================
+  /groups:
+    get:
+      tags: [Groups]
+      summary: My groups
+      responses: { '200': { description: OK } }
+    post:
+      tags: [Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string }
+                description: { type: string }
+                type:        { type: string, enum: [casual, crew, family, office, event], default: casual }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: { $ref: '#/components/schemas/Group' }
+
+  /groups/{id}/members:
+    post:
+      tags: [Groups]
+      summary: Join group by invite code
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inviteCode]
+              properties:
+                inviteCode: { type: string }
+      responses: { '200': { description: OK } }
+
+  /groups/{id}/polls:
+    post:
+      tags: [Groups]
+      summary: Create new voting poll
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [options]
+              properties:
+                options:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      foodId:       { type: string, format: uuid }
+                      restaurantId: { type: string, format: uuid }
+                closesInMinutes: { type: integer, default: 5 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: { $ref: '#/components/schemas/Poll' }
+
+  /groups/{id}/polls/{pollId}/vote:
+    post:
+      tags: [Groups]
+      summary: Cast vote on poll option
+      parameters:
+        - { in: path, name: id,     required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: pollId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [optionIdx]
+              properties:
+                optionIdx: { type: integer }
+      responses: { '200': { description: OK } }
+
+  /groups/{id}/polls/{pollId}/result:
+    get:
+      tags: [Groups]
+      parameters:
+        - { in: path, name: id,     required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: pollId, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # SOCIAL
+  # =============================================================
+  /feed:
+    get:
+      tags: [Social]
+      summary: Personalized feed
+      parameters:
+        - { in: query, name: tab,  schema: { type: string, enum: [for_you, following, nearby, trending] } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+      responses: { '200': { description: OK } }
+
+  /posts:
+    post:
+      tags: [Social]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePost' }
+      responses: { '201': { description: Created } }
+
+  /posts/{id}/like:
+    post:
+      tags: [Social]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: OK } }
+
+  /posts/{id}/comment:
+    post:
+      tags: [Social]
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:  { type: string }
+                parentId: { type: string, format: uuid }
+      responses: { '201': { description: Created } }
+
+  /stories:
+    post:
+      tags: [Social]
+      summary: Create a story (TTL 24h)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                media: { type: string, format: binary }
+                type:  { type: string, enum: [photo, video, checkin, poll, food_tag] }
+                data:  { type: string, description: JSON metadata }
+      responses: { '201': { description: Created } }
+
+  /check-ins:
+    post:
+      tags: [Social]
+      summary: Check in at a restaurant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [restaurantId, lat, lng]
+              properties:
+                restaurantId: { type: string, format: uuid }
+                foodId:       { type: string, format: uuid }
+                lat:          { type: number }
+                lng:          { type: number }
+                caption:      { type: string }
+                imageUrl:     { type: string }
+      responses: { '201': { description: Created } }
+
+  # =============================================================
+  # NOTIFICATIONS
+  # =============================================================
+  /notifications:
+    get:
+      tags: [Notifications]
+      parameters:
+        - { in: query, name: unread, schema: { type: boolean } }
+        - { in: query, name: page,   schema: { type: integer, default: 1 } }
+      responses: { '200': { description: OK } }
+
+  /notifications/read:
+    post:
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid } }
+      responses: { '200': { description: OK } }
+
+  /notifications/prefs:
+    put:
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # SUBSCRIPTION
+  # =============================================================
+  /subscription/plans:
+    get:
+      tags: [Subscription]
+      responses: { '200': { description: OK } }
+
+  /subscription/checkout:
+    post:
+      tags: [Subscription]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan, provider]
+              properties:
+                plan:     { type: string, enum: [monthly, yearly, family_monthly, family_yearly] }
+                provider: { type: string, enum: [apple, google, stripe, momo, zalopay] }
+                redirectUrl: { type: string }
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # SEARCH
+  # =============================================================
+  /search:
+    get:
+      tags: [Search]
+      parameters:
+        - { in: query, name: q,    required: true, schema: { type: string } }
+        - { in: query, name: type, schema: { type: string, enum: [all, foods, restaurants, users, posts] } }
+        - { in: query, name: lat,  schema: { type: number } }
+        - { in: query, name: lng,  schema: { type: number } }
+      responses: { '200': { description: OK } }
+
+  /search/visual:
+    post:
+      tags: [Search]
+      summary: Search by food photo
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image: { type: string, format: binary }
+      responses: { '200': { description: OK } }
+
+  # =============================================================
+  # GEO
+  # =============================================================
+  /geo/reverse:
+    get:
+      tags: [Geo]
+      parameters:
+        - { in: query, name: lat, required: true, schema: { type: number } }
+        - { in: query, name: lng, required: true, schema: { type: number } }
+      responses: { '200': { description: OK } }
+
+  /geo/weather:
+    get:
+      tags: [Geo]
+      parameters:
+        - { in: query, name: lat, required: true, schema: { type: number } }
+        - { in: query, name: lng, required: true, schema: { type: number } }
+      responses: { '200': { description: OK } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    TokenResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - properties:
+                  data: { $ref: '#/components/schemas/TokenPair' }
+
+  schemas:
+    Envelope:
+      type: object
+      properties:
+        success: { type: boolean }
+        data:    { description: Payload (varies) }
+        error:   { type: string, nullable: true }
+        meta:    { type: object, additionalProperties: true }
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error:
+          type: object
+          properties:
+            code:    { type: string, example: NOT_FOUND }
+            message: { type: string }
+            details: { type: object }
+
+    TokenPair:
+      type: object
+      properties:
+        accessToken:  { type: string }
+        refreshToken: { type: string }
+        expiresIn:    { type: integer, description: seconds }
+        user:         { $ref: '#/components/schemas/UserCompact' }
+
+    DeviceInfo:
+      type: object
+      properties:
+        deviceId:   { type: string }
+        platform:   { type: string, enum: [ios, android, web] }
+        appVersion: { type: string }
+        osVersion:  { type: string }
+        pushToken:  { type: string }
+        locale:     { type: string }
+
+    GeoPoint:
+      type: object
+      properties:
+        lat: { type: number }
+        lng: { type: number }
+
+    UserCompact:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        username:    { type: string }
+        displayName: { type: string }
+        avatarUrl:   { type: string }
+        level:       { type: integer }
+        foodieClass: { type: string }
+        isPremium:   { type: boolean }
+        isVerified:  { type: boolean }
+
+    UserPublic:
+      allOf:
+        - $ref: '#/components/schemas/UserCompact'
+        - type: object
+          properties:
+            bio:         { type: string }
+            city:        { type: string }
+            followers:   { type: integer }
+            following:   { type: integer }
+            reviewsCount:{ type: integer }
+            badges:      { type: array, items: { type: object } }
+
+    MeProfile:
+      allOf:
+        - $ref: '#/components/schemas/UserPublic'
+        - type: object
+          properties:
+            phone:       { type: string }
+            email:       { type: string }
+            preferences: { $ref: '#/components/schemas/UserPreferences' }
+            streaks:     { $ref: '#/components/schemas/Streaks' }
+            premiumUntil: { type: string, format: date-time }
+
+    UserPreferences:
+      type: object
+      properties:
+        allergies:       { type: array, items: { type: string } }
+        dietType:        { type: string }
+        cuisinesLove:    { type: array, items: { type: string } }
+        cuisinesHate:    { type: array, items: { type: string } }
+        spicyTolerance:  { type: integer }
+        budgetMin:       { type: integer }
+        budgetMax:       { type: integer }
+        cookSkill:       { type: string }
+        healthGoal:      { type: string }
+        dailyCalorie:    { type: integer }
+
+    Streaks:
+      type: object
+      properties:
+        dailyDecide: { type: integer }
+        cookStreak:  { type: integer }
+        bestDecide:  { type: integer }
+
+    UpdateMeRequest:
+      type: object
+      properties:
+        displayName: { type: string }
+        bio:         { type: string }
+        avatarUrl:   { type: string }
+        city:        { type: string }
+        preferences: { $ref: '#/components/schemas/UserPreferences' }
+
+    FoodDnaRequest:
+      type: object
+      properties:
+        age:           { type: integer }
+        city:          { type: string }
+        allergies:     { type: array, items: { type: string } }
+        dietType:      { type: string }
+        budgetMin:     { type: integer }
+        budgetMax:     { type: integer }
+        cookFrequency: { type: string, enum: [never, weekend, daily] }
+        foodsLove:     { type: array, items: { type: string, format: uuid } }
+        foodsHate:     { type: array, items: { type: string, format: uuid } }
+        healthGoal:    { type: string }
+
+    AiSuggestRequest:
+      type: object
+      required: [mode, context]
+      properties:
+        mode: { type: string, enum: [quick, detail, mood, voice, fridge, group] }
+        context:
+          type: object
+          properties:
+            hunger:       { type: integer, minimum: 1, maximum: 10 }
+            budget:
+              type: object
+              properties:
+                min: { type: integer }
+                max: { type: integer }
+            timeMin:    { type: integer }
+            mood:       { type: string }
+            with:       { type: string, enum: [solo, couple, friends, family] }
+            location:   { $ref: '#/components/schemas/GeoPoint' }
+            diet:       { type: string }
+            cuisinePref: { type: array, items: { type: string } }
+        limit: { type: integer, default: 5, maximum: 10 }
+
+    AiSuggestResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        cards:
+          type: array
+          items: { $ref: '#/components/schemas/FoodCard' }
+        reasonCodes: { type: array, items: { type: string } }
+
+    FoodCard:
+      type: object
+      properties:
+        cardId:    { type: string, format: uuid }
+        foodId:    { type: string, format: uuid }
+        title:     { type: string }
+        subtitle:  { type: string }
+        media:
+          type: object
+          properties:
+            primaryVideo: { type: string }
+            poster:       { type: string }
+            blurhash:     { type: string }
+            images:       { type: array, items: { type: string } }
+        price:
+          type: object
+          properties:
+            amount:    { type: integer }
+            currency:  { type: string, default: VND }
+            display:   { type: string }
+        rating:
+          type: object
+          properties:
+            avg:   { type: number }
+            count: { type: integer }
+        distance:
+          type: object
+          properties:
+            meters:        { type: integer }
+            display:       { type: string }
+            walkMin:       { type: integer }
+            deliveryMin:   { type: integer }
+        calories: { type: integer }
+        macros:
+          type: object
+          properties:
+            p: { type: integer }
+            c: { type: integer }
+            f: { type: integer }
+        badges:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string }
+              text: { type: string }
+              icon: { type: string }
+        liveStatus:
+          type: object
+          properties:
+            isOpen:         { type: boolean }
+            closingInMin:   { type: integer }
+            crowdedness:    { type: number }
+            waitMinutes:    { type: integer }
+            recentOrders24h:{ type: integer }
+        aiReason:  { type: string }
+        actions:
+          type: object
+          properties:
+            cook:
+              type: object
+              properties:
+                enabled:   { type: boolean }
+                recipeId:  { type: string, format: uuid }
+            order:
+              type: object
+              properties:
+                primary:   { type: string }
+                deeplink:  { type: string }
+            dine:
+              type: object
+              properties:
+                navigation: { type: string }
+                bookTable:  { type: boolean }
+        socialProof:
+          type: object
+          properties:
+            friendCount: { type: integer }
+            friendsBeen:
+              type: array
+              items: { $ref: '#/components/schemas/UserCompact' }
+
+    FoodCompact:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        nameVi:       { type: string }
+        slug:         { type: string }
+        primaryImage: { type: string }
+        avgPriceVnd:  { type: integer }
+        avgCalories:  { type: integer }
+        rating:       { type: number }
+
+    FoodDetail:
+      allOf:
+        - $ref: '#/components/schemas/FoodCompact'
+        - type: object
+          properties:
+            description:   { type: string }
+            originRegion:  { type: string }
+            cuisine:       { type: string }
+            category:      { type: string }
+            mealTypes:     { type: array, items: { type: string } }
+            dietTags:      { type: array, items: { type: string } }
+            moodTags:      { type: array, items: { type: string } }
+            flavorTags:    { type: array, items: { type: string } }
+            cookTimeMin:   { type: integer }
+            difficulty:    { type: integer }
+            ingredients:   { type: array, items: { type: object } }
+            recipe:        { type: object }
+            nutrition:     { type: object }
+            allergens:     { type: array, items: { type: string } }
+            videos:        { type: array, items: { type: object } }
+            popularity:    { type: integer }
+
+    RestaurantCompact:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string }
+        slug:        { type: string }
+        coverImage:  { type: string }
+        priceLevel:  { type: integer }
+        rating:      { type: number }
+        distanceM:   { type: integer }
+
+    RestaurantDetail:
+      allOf:
+        - $ref: '#/components/schemas/RestaurantCompact'
+        - type: object
+          properties:
+            description:    { type: string }
+            address:        { type: string }
+            city:           { type: string }
+            district:       { type: string }
+            phone:          { type: string }
+            openHours:      { type: object }
+            cuisineTags:    { type: array, items: { type: string } }
+            featureTags:    { type: array, items: { type: string } }
+            vibeTags:       { type: array, items: { type: string } }
+            images:         { type: array, items: { type: string } }
+            videos:         { type: array, items: { type: string } }
+            deliveryLinks:  { type: object }
+            isVerified:     { type: boolean }
+            liveStatus:     { type: object }
+            menuPreview:    { type: array, items: { $ref: '#/components/schemas/FoodCompact' } }
+
+    FridgeDetection:
+      type: object
+      properties:
+        name:       { type: string }
+        nameEn:     { type: string }
+        quantity:   { type: number }
+        unit:       { type: string }
+        confidence: { type: number }
+        bbox:
+          type: array
+          items: { type: number }
+          minItems: 4
+          maxItems: 4
+
+    FridgeItemInput:
+      type: object
+      required: [name]
+      properties:
+        name:      { type: string }
+        quantity:  { type: number }
+        unit:      { type: string }
+        expiresAt: { type: string, format: date }
+
+    Recipe:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string }
+        description:  { type: string }
+        timeMin:      { type: integer }
+        difficulty:   { type: integer }
+        ingredients:  { type: array, items: { type: object } }
+        missing:      { type: array, items: { type: string } }
+        steps:        { type: array, items: { type: string } }
+        tips:         { type: array, items: { type: string } }
+        servings:     { type: integer }
+
+    CreateReview:
+      type: object
+      required: [rating]
+      properties:
+        rating:        { type: integer, minimum: 1, maximum: 5 }
+        restaurantId:  { type: string, format: uuid }
+        foodId:        { type: string, format: uuid }
+        title:         { type: string }
+        content:       { type: string }
+        images:        { type: array, items: { type: string } }
+        videoUrl:      { type: string }
+        pricePaidVnd:  { type: integer }
+
+    CreatePost:
+      type: object
+      required: [type, mediaUrl]
+      properties:
+        type:         { type: string, enum: [photo, video, review, story] }
+        caption:      { type: string }
+        mediaUrl:     { type: string }
+        mediaPoster:  { type: string }
+        foodId:       { type: string, format: uuid }
+        restaurantId: { type: string, format: uuid }
+        location:     { $ref: '#/components/schemas/GeoPoint' }
+        tags:         { type: array, items: { type: string } }
+
+    MealPlanRequest:
+      type: object
+      properties:
+        weekStart:  { type: string, format: date }
+        plan:       { type: object, additionalProperties: true }
+
+    Group:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        description:{ type: string }
+        inviteCode: { type: string }
+        type:       { type: string }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/UserCompact' }
+        createdAt:  { type: string, format: date-time }
+
+    Poll:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        groupId:   { type: string, format: uuid }
+        status:    { type: string, enum: [open, closed, expired] }
+        options:
+          type: array
+          items:
+            type: object
+            properties:
+              idx:           { type: integer }
+              food:          { $ref: '#/components/schemas/FoodCompact' }
+              restaurant:    { $ref: '#/components/schemas/RestaurantCompact' }
+              voteCount:     { type: integer }
+              voters:
+                type: array
+                items: { $ref: '#/components/schemas/UserCompact' }
+        winner:    { type: object }
+        closesAt:  { type: string, format: date-time }

@@ -1,0 +1,52 @@
+name: hnag
+description: "Hôm Nay Ăn Gì? — AI Food Discovery"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # UI
+  flutter_animate: ^4.5.0
+  cached_network_image: ^3.3.1
+
+  # Media
+  video_player: ^2.9.0
+  visibility_detector: ^0.4.0+2
+  image_picker: ^1.1.2
+
+  # Maps (food map / nearby) — needs MAPBOX_DOWNLOADS_TOKEN (sk., DOWNLOADS:READ) at build time
+  mapbox_maps_flutter: ^2.6.0
+  geolocator: ^13.0.1
+
+  # Voice / TTS
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.0.2
+
+  # Misc
+  intl: ^0.19.0
+  uuid: ^4.4.0
+  url_launcher: ^6.3.0
+  share_plus: ^10.0.0
+  wakelock_plus: ^1.2.8
+  permission_handler: ^11.3.1
+  google_fonts: ^6.2.1
+  http: ^1.2.2
+  flutter_secure_storage: ^9.2.2
+  socket_io_client: ^2.0.3+1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

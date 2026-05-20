@@ -1,0 +1,95 @@
+# =============================================================================
+# Deploy HNAG backend to self-hosted server (ServerLinux @ 100.100.210.85)
+# Triggered after backend-ci succeeds on main.
+# =============================================================================
+name: Server · Deploy
+
+on:
+  workflow_run:
+    workflows: ['Backend · CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image tag to deploy'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: server-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tailscale connect
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat >> ~/.ssh/config <<EOF
+          Host ServerLinux
+            HostName 100.100.210.85
+            User huy
+            IdentityFile ~/.ssh/id_ed25519
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          EOF
+
+      - name: Sync infra files
+        run: |
+          rsync -az --delete \
+            code/infra/server/ ServerLinux:/opt/hnag/
+
+      - name: Sync SQL (for fresh installs)
+        run: |
+          ssh ServerLinux 'mkdir -p /opt/hnag/init'
+          rsync -az code/sql/01_schema.sql ServerLinux:/opt/hnag/init/01_schema.sql
+          rsync -az code/sql/02_seed_data.sql ServerLinux:/opt/hnag/init/02_seed_data.sql
+
+      - name: Run deploy script
+        env:
+          VERSION: ${{ github.event.inputs.version || github.sha }}
+        run: |
+          ssh ServerLinux "
+            set -e
+            cd /opt/hnag
+            echo '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
+            export GHCR_OWNER='${{ github.repository_owner }}'
+            export HNAG_VERSION='$VERSION'
+            chmod +x deploy.sh
+            ./deploy.sh $VERSION
+          "
+
+      - name: Smoke-test endpoint
+        run: |
+          ssh ServerLinux 'curl -fsS http://127.0.0.1/health'
+
+      - name: Slack notify
+        if: always()
+        uses: 8398a7/action-slack@v3
+        continue-on-error: true
+        with:
+          status: ${{ job.status }}
+          fields: repo,ref,commit,job
+          custom_payload: |
+            { text: "${{ job.status }}: HNAG deploy ${{ github.sha }} → ServerLinux" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

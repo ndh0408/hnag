@@ -1,0 +1,111 @@
+# =============================================================================
+# HNAG production stack (self-host)
+# - No host port bindings (uses Cloudflare Tunnel for public access)
+# - Sits alongside other apps on the same server without conflict
+# - To expose publicly: create a Cloudflare Tunnel for HNAG, paste its token
+#   into hnag.env as HNAG_TUNNEL_TOKEN, then in Cloudflare Zero Trust dashboard
+#   add public hostnames:
+#       api.tothanhthuy.cloud   → http://hnag-backend:4000
+#       dash.tothanhthuy.cloud  → http://hnag-owner-dashboard:3000
+# =============================================================================
+name: hnag
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    container_name: hnag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hnag
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: hnag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hnag"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    secrets: [postgres_password]
+    networks: [hnag-internal]
+    deploy:
+      resources:
+        limits: { memory: 2G }
+
+  redis:
+    image: redis:7-alpine
+    container_name: hnag-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1000", "--maxmemory", "768mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [hnag-internal]
+    deploy:
+      resources:
+        limits: { memory: 1G }
+
+  backend:
+    image: ${HNAG_BACKEND_IMAGE:-ghcr.io/${GHCR_OWNER:-yourname}/hnag-backend:latest}
+    container_name: hnag-backend
+    restart: unless-stopped
+    env_file:
+      - ./hnag.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "postgresql://hnag:${POSTGRES_PASSWORD}@hnag-postgres:5432/hnag?schema=public"
+      REDIS_URL: "redis://hnag-redis:6379"
+      PORT: "4000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 40s
+    networks: [hnag-internal]
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    deploy:
+      resources:
+        limits: { cpus: '2', memory: 1.5G }
+
+  owner-dashboard:
+    image: ${HNAG_DASHBOARD_IMAGE:-ghcr.io/${GHCR_OWNER:-yourname}/hnag-owner-dashboard:latest}
+    container_name: hnag-owner-dashboard
+    restart: unless-stopped
+    env_file: ./dashboard.env
+    networks: [hnag-internal]
+    profiles: ["full"]
+    deploy:
+      resources:
+        limits: { memory: 384M }
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: hnag-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${HNAG_TUNNEL_TOKEN}"]
+    networks: [hnag-internal]
+    depends_on: [backend]
+
+volumes:
+  pg_data:
+  redis_data:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+
+networks:
+  hnag-internal:
+    driver: bridge
+    name: hnag-internal

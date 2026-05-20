@@ -1,0 +1,533 @@
+// Prisma schema — generated from code/sql/01_schema.sql.
+// Use `prisma db pull` after applying SQL to keep in sync, or manage via Prisma migrate.
+// Skeleton only — high-traffic tables (events_archive, food_interactions) may be
+// better managed outside Prisma in production.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model users {
+  id              String   @id @default(uuid()) @db.Uuid
+  phone           String?  @unique
+  phone_hash      String?  @unique
+  email           String?  @unique
+  username        String?  @unique
+  display_name    String?
+  avatar_url      String?
+  cover_url       String?
+  bio             String?
+  city            String?
+  district        String?
+  birthdate       DateTime? @db.Date
+  gender          String?
+  language        String   @default("vi")
+  level           Int      @default(1)
+  xp              Int      @default(0)
+  foodie_class    String   @default("tep")
+  is_verified     Boolean  @default(false)
+  is_creator      Boolean  @default(false)
+  is_premium      Boolean  @default(false)
+  premium_until   DateTime?
+  food_dna        Json?
+  privacy_settings Json    @default("{}")
+  status          String   @default("active")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @default(now()) @updatedAt
+  last_seen_at    DateTime?
+
+  preferences     user_preferences?
+  devices         user_devices[]
+  sessions        auth_sessions[]
+  follows_sent    follows[]     @relation("follower")
+  follows_recv    follows[]     @relation("followee")
+  reviews         reviews[]
+  orders          orders[]
+  posts           posts[]
+  notifications   notifications[]
+  streaks         streaks?
+  subscriptions   subscriptions[]
+}
+
+model user_preferences {
+  user_id           String   @id @db.Uuid
+  allergies         String[] @default([])
+  diet_type         String   @default("none")
+  cuisines_love     String[] @default([])
+  cuisines_hate     String[] @default([])
+  spicy_tolerance   Int?
+  sweet_tolerance   Int?
+  salty_tolerance   Int?
+  budget_min        Int?
+  budget_max        Int?
+  cook_skill        String   @default("basic")
+  health_goal       String   @default("none")
+  daily_calorie     Int?
+  macros_target     Json?
+  notification_pref Json     @default("{}")
+  updated_at        DateTime @default(now()) @updatedAt
+  users             users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model user_devices {
+  id              String   @id @default(uuid()) @db.Uuid
+  user_id         String?  @db.Uuid
+  device_id       String   @unique
+  platform        String?
+  app_version     String?
+  os_version      String?
+  push_token      String?
+  locale          String?
+  last_active_at  DateTime @default(now())
+  created_at      DateTime @default(now())
+  users           users?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model auth_sessions {
+  id                  String   @id @default(uuid()) @db.Uuid
+  user_id             String?  @db.Uuid
+  device_id           String?  @db.Uuid
+  refresh_token_hash  String?  @unique
+  expires_at          DateTime?
+  ip_inet             String?
+  user_agent          String?
+  revoked_at          DateTime?
+  created_at          DateTime @default(now())
+  users               users?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model foods {
+  id              String   @id @default(uuid()) @db.Uuid
+  name_vi         String
+  name_en         String?
+  slug            String   @unique
+  description     String?
+  primary_image   String?
+  images          String[] @default([])
+  primary_video   String?
+  origin_region   String   @default("other")
+  cuisine         String   @default("vietnamese")
+  category        String?
+  meal_types      String[] @default([])
+  diet_tags       String[] @default([])
+  flavor_tags     String[] @default([])
+  mood_tags       String[] @default([])
+  vibe_tags       String[] @default([])
+  avg_calories    Int?
+  avg_price_vnd   Int?
+  cook_time_min   Int?
+  difficulty      Int?
+  ingredients     Json?
+  recipe          Json?
+  nutrition       Json?
+  allergens       String[] @default([])
+  spicy_level     Int?
+  sweet_level     Int?
+  popularity      Int      @default(0)
+  trending_score  Decimal  @default(0) @db.Decimal(6, 2)
+  rating_avg      Decimal  @default(0) @db.Decimal(3, 2)
+  rating_count    Int      @default(0)
+  embedding_id    String?  @db.Uuid
+  is_seasonal     Boolean  @default(false)
+  season_tags     String[] @default([])
+  status          String   @default("active")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @default(now()) @updatedAt
+
+  menu_items      menu_items[]
+  reviews         reviews[]
+  food_interactions food_interactions[]
+}
+
+model restaurants {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String
+  slug            String   @unique
+  description     String?
+  cover_image     String?
+  images          String[] @default([])
+  videos          String[] @default([])
+  address         String?
+  city            String?
+  district        String?
+  ward            String?
+  // location is GEOGRAPHY(POINT,4326) — use raw queries
+  phone           String?
+  email           String?
+  website         String?
+  open_hours      Json?
+  price_level     Int?
+  cuisine_tags    String[] @default([])
+  feature_tags    String[] @default([])
+  vibe_tags       String[] @default([])
+  rating_avg      Decimal  @default(0) @db.Decimal(3, 2)
+  rating_count    Int      @default(0)
+  delivery_links  Json     @default("{}")
+  is_verified     Boolean  @default(false)
+  is_claimed      Boolean  @default(false)
+  is_sponsored    Boolean  @default(false)
+  sponsor_until   DateTime?
+  popularity      Int      @default(0)
+  trending_score  Decimal  @default(0) @db.Decimal(6, 2)
+  status          String   @default("active")
+  owner_user_id   String?  @db.Uuid
+  created_at      DateTime @default(now())
+  updated_at      DateTime @default(now()) @updatedAt
+
+  menu_items      menu_items[]
+  reviews         reviews[]
+  orders          orders[]
+  restaurant_live restaurant_live?
+  restaurant_claims restaurant_claims[]
+  restaurant_owners restaurant_owners[]
+}
+
+model menu_items {
+  id            String   @id @default(uuid()) @db.Uuid
+  restaurant_id String?  @db.Uuid
+  food_id       String?  @db.Uuid
+  name          String?
+  description   String?
+  image_url     String?
+  price_vnd     Int?
+  category      String?
+  available     Boolean  @default(true)
+  is_signature  Boolean  @default(false)
+  position      Int      @default(0)
+  created_at    DateTime @default(now())
+  restaurants   restaurants? @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  foods         foods?       @relation(fields: [food_id], references: [id])
+}
+
+model restaurant_live {
+  restaurant_id     String   @id @db.Uuid
+  is_open           Boolean  @default(true)
+  closing_in_min    Int?
+  crowdedness       Decimal? @db.Decimal(3, 2)
+  wait_minutes      Int?
+  recent_orders_24h Int      @default(0)
+  updated_at        DateTime @default(now()) @updatedAt
+  restaurants       restaurants @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+}
+
+model food_interactions {
+  id            BigInt   @id @default(autoincrement())
+  user_id       String?  @db.Uuid
+  food_id       String?  @db.Uuid
+  restaurant_id String?  @db.Uuid
+  action        String
+  context       Json?
+  rating        Int?
+  session_id    String?  @db.Uuid
+  created_at    DateTime @default(now())
+  foods         foods?   @relation(fields: [food_id], references: [id], onDelete: Cascade)
+}
+
+model reviews {
+  id             String   @id @default(uuid()) @db.Uuid
+  user_id        String?  @db.Uuid
+  restaurant_id  String?  @db.Uuid
+  food_id        String?  @db.Uuid
+  rating         Int
+  title          String?
+  content        String?
+  images         String[] @default([])
+  video_url      String?
+  price_paid_vnd Int?
+  helpful_count  Int      @default(0)
+  reply_count    Int      @default(0)
+  is_verified    Boolean  @default(false)
+  is_flagged     Boolean  @default(false)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @default(now()) @updatedAt
+
+  users          users?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  restaurants    restaurants? @relation(fields: [restaurant_id], references: [id])
+  foods          foods?   @relation(fields: [food_id], references: [id])
+}
+
+model orders {
+  id             String   @id @default(uuid()) @db.Uuid
+  user_id        String?  @db.Uuid
+  partner        String
+  external_id    String?
+  restaurant_id  String?  @db.Uuid
+  items          Json
+  total_vnd      Int?
+  discount_vnd   Int?     @default(0)
+  status         String   @default("intent")
+  context        Json?
+  placed_at      DateTime @default(now())
+  confirmed_at   DateTime?
+  delivered_at   DateTime?
+  cancelled_at   DateTime?
+  notes          String?
+
+  users          users?   @relation(fields: [user_id], references: [id])
+  restaurants    restaurants? @relation(fields: [restaurant_id], references: [id])
+}
+
+model posts {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String?  @db.Uuid
+  type          String   @default("photo")
+  caption       String?
+  media_url     String?
+  media_poster  String?
+  blurhash      String?
+  food_id       String?  @db.Uuid
+  restaurant_id String?  @db.Uuid
+  tags          String[] @default([])
+  like_count    Int      @default(0)
+  comment_count Int      @default(0)
+  view_count    Int      @default(0)
+  save_count    Int      @default(0)
+  share_count   Int      @default(0)
+  quality_score Decimal  @default(0) @db.Decimal(4, 2)
+  is_flagged    Boolean  @default(false)
+  is_archived   Boolean  @default(false)
+  created_at    DateTime @default(now())
+  users         users?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model follows {
+  follower_id  String   @db.Uuid
+  followee_id  String   @db.Uuid
+  created_at   DateTime @default(now())
+  follower     users    @relation("follower", fields: [follower_id], references: [id], onDelete: Cascade)
+  followee     users    @relation("followee", fields: [followee_id], references: [id], onDelete: Cascade)
+  @@id([follower_id, followee_id])
+}
+
+model notifications {
+  id          String   @id @default(uuid()) @db.Uuid
+  user_id     String?  @db.Uuid
+  type        String
+  title       String?
+  body        String?
+  image_url   String?
+  data        Json?
+  read_at     DateTime?
+  delivered_at DateTime?
+  created_at  DateTime @default(now())
+  users       users?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model streaks {
+  user_id        String   @id @db.Uuid
+  daily_decide   Int      @default(0)
+  daily_open     Int      @default(0)
+  cook_streak    Int      @default(0)
+  review_streak  Int      @default(0)
+  last_decide    DateTime? @db.Date
+  last_open      DateTime? @db.Date
+  last_cook      DateTime? @db.Date
+  last_review    DateTime? @db.Date
+  best_decide    Int      @default(0)
+  best_cook      Int      @default(0)
+  updated_at     DateTime @default(now()) @updatedAt
+  users          users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model groups {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String?
+  description  String?
+  avatar_url   String?
+  type         String   @default("casual")
+  creator_id   String?  @db.Uuid
+  invite_code  String?  @unique
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+
+  group_members group_members[]
+  group_polls   group_polls[]
+}
+
+model group_members {
+  group_id   String   @db.Uuid
+  user_id    String   @db.Uuid
+  role       String   @default("member")
+  nickname   String?
+  joined_at  DateTime @default(now())
+  groups     groups   @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  @@id([group_id, user_id])
+}
+
+model group_polls {
+  id           String   @id @default(uuid()) @db.Uuid
+  group_id     String?  @db.Uuid
+  creator_id   String?  @db.Uuid
+  status       String   @default("open")
+  options      Json
+  votes        Json     @default("{}")
+  context      Json?
+  closes_at    DateTime?
+  closed_at    DateTime?
+  winner       Json?
+  created_at   DateTime @default(now())
+  groups       groups?  @relation(fields: [group_id], references: [id], onDelete: Cascade)
+}
+
+model subscriptions {
+  id                  String   @id @default(uuid()) @db.Uuid
+  user_id             String?  @db.Uuid
+  plan                String
+  status              String   @default("trialing")
+  provider            String?
+  external_id         String?
+  amount_vnd          Int?
+  started_at          DateTime @default(now())
+  trial_ends_at       DateTime?
+  current_period_end  DateTime?
+  cancelled_at        DateTime?
+  cancel_reason       String?
+  auto_renew          Boolean  @default(true)
+  created_at          DateTime @default(now())
+  users               users?   @relation(fields: [user_id], references: [id])
+}
+
+model restaurant_claims {
+  id              String   @id @default(uuid()) @db.Uuid
+  restaurant_id   String?  @db.Uuid
+  claimant_user_id String? @db.Uuid
+  status          String   @default("pending")
+  position        String?
+  contact_email   String?
+  contact_phone   String?
+  phone_otp_passed Boolean @default(false)
+  license_url     String?
+  license_ocr     Json?
+  license_score   Decimal? @db.Decimal(3, 2)
+  geo_verified    Boolean  @default(false)
+  geo_visit_at    DateTime?
+  email_domain_match Boolean @default(false)
+  total_score     Decimal? @db.Decimal(3, 2)
+  notes           String?
+  reviewed_by     String?  @db.Uuid
+  reviewed_at     DateTime?
+  created_at      DateTime @default(now())
+  resolved_at     DateTime?
+  restaurants     restaurants? @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+}
+
+model restaurant_owners {
+  restaurant_id  String   @db.Uuid
+  user_id        String   @db.Uuid
+  role           String   @default("owner")
+  permissions    String[] @default([])
+  added_at       DateTime @default(now())
+  added_by       String?  @db.Uuid
+  restaurants    restaurants @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  @@id([restaurant_id, user_id])
+}
+
+model ai_sessions {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String?  @db.Uuid
+  mode          String
+  input         Json?
+  output_cards  Json?
+  ranker_scores Json?
+  reason_codes  String[] @default([])
+  latency_ms    Int?
+  llm_cost_usd  Decimal? @db.Decimal(8, 5)
+  feedback      Json?
+  created_at    DateTime @default(now())
+}
+
+model couples {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_a        String?  @db.Uuid
+  user_b        String?  @db.Uuid
+  anniversary   DateTime? @db.Date
+  status        String   @default("active")
+  shared_emb    Json?
+  created_at    DateTime @default(now())
+  dissolved_at  DateTime?
+}
+
+model check_ins {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String?  @db.Uuid
+  restaurant_id String?  @db.Uuid
+  food_id       String?  @db.Uuid
+  caption       String?
+  image_url     String?
+  gps_verified  Boolean  @default(false)
+  created_at    DateTime @default(now())
+}
+
+model achievements {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  name_vi     String
+  name_en     String?
+  description String?
+  icon_url    String?
+  tier        String?
+  xp_reward   Int      @default(0)
+  criteria    Json?
+  hidden      Boolean  @default(false)
+}
+
+model user_achievements {
+  user_id        String   @db.Uuid
+  achievement_id String   @db.Uuid
+  progress       Decimal? @db.Decimal(5, 2)
+  unlocked_at    DateTime?
+  @@id([user_id, achievement_id])
+}
+
+model daily_quests {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String?
+  name_vi     String?
+  description String?
+  xp_reward   Int?
+  criteria    Json?
+  active_date DateTime? @db.Date
+}
+
+model user_quests {
+  user_id      String   @db.Uuid
+  quest_id     String   @db.Uuid
+  progress     Decimal? @db.Decimal(5, 2)
+  completed_at DateTime?
+  date         DateTime @default(now()) @db.Date
+  @@id([user_id, quest_id, date])
+}
+
+model post_likes {
+  post_id    String   @db.Uuid
+  user_id    String   @db.Uuid
+  created_at DateTime @default(now())
+  @@id([post_id, user_id])
+}
+
+model post_comments {
+  id         String   @id @default(uuid()) @db.Uuid
+  post_id    String?  @db.Uuid
+  user_id    String?  @db.Uuid
+  parent_id  String?  @db.Uuid
+  content    String
+  like_count Int      @default(0)
+  created_at DateTime @default(now())
+}
+
+model stories {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String?  @db.Uuid
+  media_url     String?
+  type          String?
+  data          Json?
+  restaurant_id String?  @db.Uuid
+  view_count    Int      @default(0)
+  created_at    DateTime @default(now())
+  expires_at    DateTime @default(now())
+}

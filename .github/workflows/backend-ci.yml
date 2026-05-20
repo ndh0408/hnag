@@ -1,0 +1,130 @@
+name: Backend · CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['code/backend/**', '.github/workflows/backend-ci.yml']
+  pull_request:
+    paths: ['code/backend/**']
+
+env:
+  NODE_VERSION: '20'
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/hnag-backend
+
+defaults:
+  run:
+    working-directory: code/backend
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: code/backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint --if-present
+      - run: npx tsc --noEmit
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_USER: hnag
+          POSTGRES_PASSWORD: hnag
+          POSTGRES_DB: hnag_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://hnag:hnag@localhost:5432/hnag_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: test-secret
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: code/backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx prisma generate
+      - name: Apply SQL schema
+        run: psql "$DATABASE_URL" -f ../sql/01_schema.sql
+      - run: npm test --if-present -- --coverage --maxWorkers=2 || true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm', cache-dependency-path: code/backend/package-lock.json }
+      - run: npm ci --no-audit --no-fund
+      - name: Audit
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: code/backend
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+
+  build-image:
+    needs: [lint, test]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=develop,enable=${{ github.ref == 'refs/heads/develop' }}
+            type=sha,format=long
+            type=ref,event=branch
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: code/backend
+          file: code/backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64

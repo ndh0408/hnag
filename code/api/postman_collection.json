@@ -1,0 +1,366 @@
+{
+  "info": {
+    "name": "HNAG — Hôm Nay Ăn Gì? API",
+    "description": "Postman collection for HNAG API. Set {{baseUrl}} and run \"Auth · OTP Verify\" first to populate {{accessToken}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "hnag-v1"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api-stage.tothanhthuy.cloud/v1" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "demoFoodId", "value": "f0000000-0000-0000-0000-000000000011" },
+    { "key": "demoRestaurantId", "value": "b0000000-0000-0000-0000-000000000016" }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-save tokens from successful auth responses",
+          "if (pm.response && pm.response.code === 200) {",
+          "  try {",
+          "    const j = pm.response.json();",
+          "    if (j && j.data && j.data.accessToken) {",
+          "      pm.collectionVariables.set('accessToken', j.data.accessToken);",
+          "      pm.collectionVariables.set('refreshToken', j.data.refreshToken);",
+          "      if (j.data.user && j.data.user.id) pm.collectionVariables.set('userId', j.data.user.id);",
+          "    }",
+          "  } catch (e) {}",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "OTP · Send",
+          "request": {
+            "method": "POST",
+            "auth": { "type": "noauth" },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/otp/send",
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"+84901234567\"\n}" }
+          }
+        },
+        {
+          "name": "OTP · Verify",
+          "request": {
+            "method": "POST",
+            "auth": { "type": "noauth" },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/otp/verify",
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"+84901234567\",\n  \"code\": \"123456\",\n  \"device\": {\n    \"deviceId\": \"postman-runner-001\",\n    \"platform\": \"web\",\n    \"appVersion\": \"1.0.0\",\n    \"locale\": \"vi-VN\"\n  }\n}" }
+          }
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "auth": { "type": "noauth" },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/refresh",
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/logout" }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        { "name": "Me",          "request": { "method": "GET",    "url": "{{baseUrl}}/users/me" } },
+        { "name": "Update me",   "request": { "method": "PATCH",  "url": "{{baseUrl}}/users/me", "header": [{"key":"Content-Type","value":"application/json"}], "body": { "mode": "raw", "raw": "{\n  \"displayName\": \"Thảo Lê\",\n  \"bio\": \"Foodie ❤️ Sài Gòn\",\n  \"preferences\": {\n    \"allergies\": [\"peanut\"],\n    \"spicyTolerance\": 4,\n    \"budgetMin\": 30000,\n    \"budgetMax\": 100000\n  }\n}" } } },
+        { "name": "Public profile", "request": { "method": "GET", "url": "{{baseUrl}}/users/{{userId}}" } },
+        { "name": "Follow",      "request": { "method": "POST",   "url": "{{baseUrl}}/users/d0000000-0000-0000-0000-000000000003/follow" } },
+        { "name": "Unfollow",    "request": { "method": "DELETE", "url": "{{baseUrl}}/users/d0000000-0000-0000-0000-000000000003/follow" } }
+      ]
+    },
+    {
+      "name": "Onboarding",
+      "item": [
+        { "name": "Foods grid (60)", "request": { "method": "GET",  "url": "{{baseUrl}}/onboarding/foods/grid" } },
+        { "name": "Submit Food DNA", "request": { "method": "POST", "url": "{{baseUrl}}/onboarding/food-dna", "header":[{"key":"Content-Type","value":"application/json"}], "body": { "mode": "raw", "raw": "{\n  \"age\": 28,\n  \"city\": \"TP.HCM\",\n  \"allergies\": [\"peanut\"],\n  \"dietType\": \"none\",\n  \"budgetMin\": 30000,\n  \"budgetMax\": 100000,\n  \"cookFrequency\": \"weekend\",\n  \"foodsLove\": [\n    \"f0000000-0000-0000-0000-000000000001\",\n    \"f0000000-0000-0000-0000-000000000011\",\n    \"f0000000-0000-0000-0000-000000000019\"\n  ],\n  \"foodsHate\": [\n    \"f0000000-0000-0000-0000-000000000050\"\n  ],\n  \"healthGoal\": \"maintain\"\n}" } } }
+      ]
+    },
+    {
+      "name": "AI",
+      "item": [
+        {
+          "name": "Suggest · Quick",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/ai/suggest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"quick\",\n  \"context\": {\n    \"hunger\": 7,\n    \"budget\": { \"min\": 30000, \"max\": 80000 },\n    \"timeMin\": 30,\n    \"with\": \"solo\",\n    \"location\": { \"lat\": 10.7740, \"lng\": 106.6940 }\n  },\n  \"limit\": 5\n}"
+            }
+          }
+        },
+        {
+          "name": "Suggest · Mood",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/ai/mood",
+            "body": { "mode": "raw", "raw": "{\n  \"mood\": \"stress\",\n  \"location\": { \"lat\": 10.7740, \"lng\": 106.6940 }\n}" }
+          }
+        },
+        {
+          "name": "Suggest · Detail",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/ai/suggest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"detail\",\n  \"context\": {\n    \"hunger\": 8,\n    \"budget\": { \"min\": 50000, \"max\": 200000 },\n    \"timeMin\": 60,\n    \"mood\": \"date\",\n    \"with\": \"couple\",\n    \"diet\": \"none\",\n    \"cuisinePref\": [\"japanese\", \"vietnamese\"],\n    \"location\": { \"lat\": 21.0285, \"lng\": 105.8528 }\n  },\n  \"limit\": 5\n}"
+            }
+          }
+        },
+        {
+          "name": "Feedback",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/ai/feedback",
+            "body": { "mode": "raw", "raw": "{\n  \"sessionId\": \"<replace-me>\",\n  \"foodId\": \"{{demoFoodId}}\",\n  \"action\": \"save\"\n}" }
+          }
+        },
+        {
+          "name": "Re-roll",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/ai/refresh",
+            "body": { "mode": "raw", "raw": "{\n  \"sessionId\": \"<replace-me>\"\n}" }
+          }
+        },
+        {
+          "name": "Match TikTok link",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/ai/match-link",
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://www.tiktok.com/@khoailangthang/video/x1\",\n  \"location\": { \"lat\": 10.7740, \"lng\": 106.6940 }\n}" }
+          }
+        },
+        {
+          "name": "Fridge · Scan (multipart)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/ai/fridge/scan",
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "image", "type": "file", "src": "" }
+            ]}
+          }
+        },
+        {
+          "name": "Fridge · Recipes from ingredients",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/ai/fridge/recipes",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ingredients\": [\n    { \"name\": \"trứng\",    \"quantity\": 4, \"unit\": \"quả\" },\n    { \"name\": \"cà chua\",  \"quantity\": 3, \"unit\": \"quả\" },\n    { \"name\": \"hành lá\",  \"quantity\": 1, \"unit\": \"bó\" }\n  ],\n  \"timeMin\": 20,\n  \"skill\": \"basic\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Foods",
+      "item": [
+        { "name": "List foods (vietnamese)", "request": { "method": "GET", "url": "{{baseUrl}}/foods?cuisine=vietnamese&limit=20" } },
+        { "name": "Trending this week",      "request": { "method": "GET", "url": "{{baseUrl}}/foods/trending?city=TP.HCM&period=week" } },
+        { "name": "Food detail",             "request": { "method": "GET", "url": "{{baseUrl}}/foods/{{demoFoodId}}" } },
+        { "name": "Restaurants serving this", "request": { "method": "GET", "url": "{{baseUrl}}/foods/{{demoFoodId}}/restaurants?lat=10.774&lng=106.694&radius=5000" } }
+      ]
+    },
+    {
+      "name": "Restaurants",
+      "item": [
+        { "name": "Nearby",           "request": { "method": "GET", "url": "{{baseUrl}}/restaurants/nearby?lat=10.774&lng=106.694&radius=3000&openNow=true" } },
+        { "name": "Restaurant detail","request": { "method": "GET", "url": "{{baseUrl}}/restaurants/{{demoRestaurantId}}" } },
+        { "name": "Menu",             "request": { "method": "GET", "url": "{{baseUrl}}/restaurants/{{demoRestaurantId}}/menu" } },
+        { "name": "Reviews",          "request": { "method": "GET", "url": "{{baseUrl}}/restaurants/{{demoRestaurantId}}/reviews?sort=helpful" } }
+      ]
+    },
+    {
+      "name": "Reviews",
+      "item": [
+        {
+          "name": "Create review",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/reviews",
+            "body": { "mode": "raw", "raw": "{\n  \"rating\": 5,\n  \"restaurantId\": \"{{demoRestaurantId}}\",\n  \"foodId\": \"{{demoFoodId}}\",\n  \"title\": \"Ngon xuất sắc!\",\n  \"content\": \"Nước dùng đậm đà, bánh phở mềm. Sẽ quay lại\",\n  \"images\": [\"https://cdn.tothanhthuy.cloud/r/1.jpg\"],\n  \"pricePaidVnd\": 55000\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "Create order intent (GrabFood)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/intent",
+            "body": { "mode": "raw", "raw": "{\n  \"foodId\": \"{{demoFoodId}}\",\n  \"restaurantId\": \"{{demoRestaurantId}}\",\n  \"preferredPartner\": \"grabfood\"\n}" }
+          }
+        },
+        { "name": "Order history", "request": { "method": "GET", "url": "{{baseUrl}}/orders?page=1" } }
+      ]
+    },
+    {
+      "name": "Fridge",
+      "item": [
+        { "name": "List", "request": { "method": "GET", "url": "{{baseUrl}}/fridge" } },
+        {
+          "name": "Add items (bulk)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/fridge",
+            "body": { "mode": "raw", "raw": "{\n  \"items\": [\n    { \"name\": \"trứng\",   \"quantity\": 4, \"unit\": \"quả\", \"expiresAt\": \"2026-06-01\" },\n    { \"name\": \"cà chua\", \"quantity\": 3, \"unit\": \"quả\", \"expiresAt\": \"2026-05-25\" }\n  ]\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Meal plan",
+      "item": [
+        { "name": "Get week",      "request": { "method": "GET",  "url": "{{baseUrl}}/meal-plan?week=2026-05-18" } },
+        {
+          "name": "Generate AI plan",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/meal-plan/generate",
+            "body": { "mode": "raw", "raw": "{\n  \"weekStart\": \"2026-05-18\",\n  \"budgetTotal\": 1200000,\n  \"calorieGoal\": 1800\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Groups",
+      "item": [
+        { "name": "My groups", "request": { "method": "GET",  "url": "{{baseUrl}}/groups" } },
+        {
+          "name": "Create group",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/groups",
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Anh em đi ăn\",\n  \"type\": \"crew\"\n}" }
+          }
+        },
+        {
+          "name": "Create poll",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/groups/<groupId>/polls",
+            "body": { "mode": "raw", "raw": "{\n  \"options\": [\n    { \"foodId\": \"f0000000-0000-0000-0000-000000000026\", \"restaurantId\": \"b0000000-0000-0000-0000-000000000021\" },\n    { \"foodId\": \"f0000000-0000-0000-0000-000000000019\", \"restaurantId\": \"b0000000-0000-0000-0000-000000000002\" },\n    { \"foodId\": \"f0000000-0000-0000-0000-000000000030\", \"restaurantId\": \"b0000000-0000-0000-0000-000000000027\" }\n  ],\n  \"closesInMinutes\": 5\n}" }
+          }
+        },
+        {
+          "name": "Cast vote",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/groups/<groupId>/polls/<pollId>/vote",
+            "body": { "mode": "raw", "raw": "{ \"optionIdx\": 0 }" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Social",
+      "item": [
+        { "name": "Feed (for you)",   "request": { "method": "GET", "url": "{{baseUrl}}/feed?tab=for_you" } },
+        { "name": "Feed (nearby)",    "request": { "method": "GET", "url": "{{baseUrl}}/feed?tab=nearby" } },
+        {
+          "name": "Create post",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/posts",
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"photo\",\n  \"caption\": \"Bún bò Bà Hai siêu ngon!\",\n  \"mediaUrl\": \"https://cdn.tothanhthuy.cloud/posts/1.jpg\",\n  \"foodId\": \"{{demoFoodId}}\",\n  \"restaurantId\": \"{{demoRestaurantId}}\",\n  \"tags\": [\"bunbo\", \"hanoi\"]\n}" }
+          }
+        },
+        {
+          "name": "Check-in",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/check-ins",
+            "body": { "mode": "raw", "raw": "{\n  \"restaurantId\": \"{{demoRestaurantId}}\",\n  \"foodId\": \"{{demoFoodId}}\",\n  \"lat\": 21.0306,\n  \"lng\": 105.8504,\n  \"caption\": \"Ấm bụng cho ngày mưa Hà Nội\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        { "name": "Text search",   "request": { "method": "GET", "url": "{{baseUrl}}/search?q=bún bò&type=foods&lat=10.774&lng=106.694" } },
+        { "name": "Visual search", "request": { "method": "POST", "url": "{{baseUrl}}/search/visual", "body": { "mode": "formdata", "formdata": [{ "key": "image", "type": "file", "src": "" }] } } }
+      ]
+    },
+    {
+      "name": "Geo",
+      "item": [
+        { "name": "Reverse geocode", "request": { "method": "GET", "url": "{{baseUrl}}/geo/reverse?lat=10.774&lng=106.694" } },
+        { "name": "Weather",         "request": { "method": "GET", "url": "{{baseUrl}}/geo/weather?lat=10.774&lng=106.694" } }
+      ]
+    },
+    {
+      "name": "Subscription",
+      "item": [
+        { "name": "Plans", "request": { "method": "GET",  "url": "{{baseUrl}}/subscription/plans" } },
+        {
+          "name": "Checkout yearly via Momo",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/subscription/checkout",
+            "body": { "mode": "raw", "raw": "{\n  \"plan\": \"yearly\",\n  \"provider\": \"momo\",\n  \"redirectUrl\": \"hnag://subscription/success\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        { "name": "List",         "request": { "method": "GET",  "url": "{{baseUrl}}/notifications" } },
+        { "name": "Mark read",    "request": { "method": "POST", "url": "{{baseUrl}}/notifications/read", "header":[{"key":"Content-Type","value":"application/json"}], "body": { "mode": "raw", "raw": "{ \"ids\": [\"<notif-id>\"] }" } } },
+        {
+          "name": "Update prefs",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/notifications/prefs",
+            "body": { "mode": "raw", "raw": "{\n  \"push\": true,\n  \"email\": false,\n  \"zalo\": true,\n  \"quietHours\": [22, 7]\n}" }
+          }
+        }
+      ]
+    }
+  ]
+}

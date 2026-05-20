@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh ServerLinux \"docker exec hnag-postgres psql -U hnag -d hnag -c '\\\\dt' 2>&1 | grep -iE 'group|poll|vote|subscription|meal|plan|device|notif|restaurant_food|menu'\")",
+      "Bash(ssh -o ConnectTimeout=10 vm \"echo CONNECTED && hostname && whoami && sw_vers\")",
+      "WebSearch"
+    ]
+  }
+}

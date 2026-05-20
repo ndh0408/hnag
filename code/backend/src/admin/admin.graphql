@@ -1,0 +1,799 @@
+# =============================================================================
+# HNAG — Admin GraphQL Schema
+# Used by the internal admin dashboard (web, Next.js + Apollo Client + shadcn).
+# Permissions enforced server-side via @auth(roles: [...]) directive.
+# =============================================================================
+
+scalar DateTime
+scalar JSON
+scalar UUID
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DIRECTIVES
+# ─────────────────────────────────────────────────────────────────────────────
+directive @auth(roles: [AdminRole!]!) on FIELD_DEFINITION
+directive @audit on FIELD_DEFINITION
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPS
+  CONTENT_MOD
+  BD
+  FINANCE
+  READ_ONLY
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROOT
+# ─────────────────────────────────────────────────────────────────────────────
+type Query {
+  # Meta
+  me: AdminUser! @auth(roles: [SUPER_ADMIN, OPS, CONTENT_MOD, BD, FINANCE, READ_ONLY])
+  health: HealthStatus!
+
+  # Users
+  user(id: UUID!): User @auth(roles: [SUPER_ADMIN, OPS])
+  users(filter: UserFilter, page: Page): UserConnection! @auth(roles: [SUPER_ADMIN, OPS])
+
+  # Restaurants
+  restaurant(id: UUID!): Restaurant @auth(roles: [SUPER_ADMIN, OPS, BD, CONTENT_MOD])
+  restaurants(filter: RestaurantFilter, page: Page): RestaurantConnection!
+    @auth(roles: [SUPER_ADMIN, OPS, BD, CONTENT_MOD])
+
+  # Foods
+  food(id: UUID!): Food @auth(roles: [SUPER_ADMIN, CONTENT_MOD, OPS])
+  foods(filter: FoodFilter, page: Page): FoodConnection!
+    @auth(roles: [SUPER_ADMIN, CONTENT_MOD, OPS])
+
+  # Claims
+  claim(id: UUID!): RestaurantClaim @auth(roles: [SUPER_ADMIN, OPS])
+  claims(filter: ClaimFilter, page: Page): ClaimConnection!
+    @auth(roles: [SUPER_ADMIN, OPS])
+
+  # Reviews
+  reviews(filter: ReviewFilter, page: Page): ReviewConnection!
+    @auth(roles: [SUPER_ADMIN, CONTENT_MOD, OPS])
+  reportQueue(severity: ReportSeverity, page: Page): ReportConnection!
+    @auth(roles: [SUPER_ADMIN, CONTENT_MOD])
+
+  # AI Ops
+  aiSessions(filter: AiSessionFilter, page: Page): AiSessionConnection!
+    @auth(roles: [SUPER_ADMIN, OPS])
+  aiQualityMetrics(period: Period!): AiQualityMetrics!
+    @auth(roles: [SUPER_ADMIN, OPS])
+  aiCostBreakdown(period: Period!): AiCostBreakdown!
+    @auth(roles: [SUPER_ADMIN, OPS, FINANCE])
+
+  # Growth & Analytics
+  metricsOverview(period: Period!): MetricsOverview!
+    @auth(roles: [SUPER_ADMIN, OPS, BD, FINANCE, READ_ONLY])
+  cohortRetention(cohortStart: DateTime!): CohortRetention!
+    @auth(roles: [SUPER_ADMIN, OPS, READ_ONLY])
+  funnelAnalysis(funnel: FunnelKind!, period: Period!): FunnelResult!
+    @auth(roles: [SUPER_ADMIN, OPS, READ_ONLY])
+  abTestResults(experimentId: UUID!): AbTestResult!
+    @auth(roles: [SUPER_ADMIN, OPS])
+
+  # Finance
+  revenueDashboard(period: Period!): RevenueDashboard!
+    @auth(roles: [SUPER_ADMIN, FINANCE])
+  subscriptionStats: SubscriptionStats! @auth(roles: [SUPER_ADMIN, FINANCE])
+  partnerPayouts(period: Period!): PartnerPayoutList!
+    @auth(roles: [SUPER_ADMIN, FINANCE])
+
+  # Viral & content
+  viralDishes(filter: ViralFilter, page: Page): ViralDishConnection!
+    @auth(roles: [SUPER_ADMIN, OPS, CONTENT_MOD])
+
+  # Audit
+  auditLog(filter: AuditFilter, page: Page): AuditConnection!
+    @auth(roles: [SUPER_ADMIN])
+}
+
+type Mutation {
+  # Users
+  banUser(id: UUID!, reason: String!, durationDays: Int): User!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  unbanUser(id: UUID!): User! @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  refundUser(id: UUID!, amountVnd: Int!, reason: String!): RefundResult!
+    @auth(roles: [SUPER_ADMIN, OPS, FINANCE]) @audit
+  grantPremium(id: UUID!, days: Int!, reason: String!): User!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+
+  # Restaurants
+  verifyRestaurant(id: UUID!): Restaurant! @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  unverifyRestaurant(id: UUID!, reason: String!): Restaurant!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  mergeRestaurants(primaryId: UUID!, duplicateId: UUID!): Restaurant!
+    @auth(roles: [SUPER_ADMIN, CONTENT_MOD]) @audit
+  archiveRestaurant(id: UUID!, reason: String!): Restaurant!
+    @auth(roles: [SUPER_ADMIN, CONTENT_MOD]) @audit
+  setRestaurantSponsored(id: UUID!, until: DateTime!): Restaurant!
+    @auth(roles: [SUPER_ADMIN, BD]) @audit
+
+  # Foods
+  upsertFood(input: FoodInput!): Food! @auth(roles: [SUPER_ADMIN, CONTENT_MOD]) @audit
+  archiveFood(id: UUID!): Food! @auth(roles: [SUPER_ADMIN, CONTENT_MOD]) @audit
+
+  # Claims
+  approveClaim(id: UUID!, note: String): RestaurantClaim!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  rejectClaim(id: UUID!, reason: String!): RestaurantClaim!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  revokeOwnership(restaurantId: UUID!, userId: UUID!, reason: String!): Boolean!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+
+  # Reviews / moderation
+  hideReview(id: UUID!, reason: String!): Review! @auth(roles: [SUPER_ADMIN, CONTENT_MOD]) @audit
+  restoreReview(id: UUID!): Review! @auth(roles: [SUPER_ADMIN, CONTENT_MOD]) @audit
+  resolveReport(id: UUID!, action: ReportAction!, note: String): Report!
+    @auth(roles: [SUPER_ADMIN, CONTENT_MOD]) @audit
+
+  # AI overrides
+  pinFoodSuggestion(input: PinSuggestionInput!): PinSuggestionResult!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  suppressFoodSuggestion(foodId: UUID!, scope: String!, reason: String!): Boolean!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+  rerunRanker(experimentId: UUID!): Boolean! @auth(roles: [SUPER_ADMIN, OPS]) @audit
+
+  # Viral curation
+  markDishViral(foodId: UUID!, region: String, until: DateTime!): ViralDish!
+    @auth(roles: [SUPER_ADMIN, OPS, CONTENT_MOD]) @audit
+
+  # Admin user mgmt
+  inviteAdmin(email: String!, role: AdminRole!): AdminUser!
+    @auth(roles: [SUPER_ADMIN]) @audit
+  updateAdminRole(id: UUID!, role: AdminRole!): AdminUser!
+    @auth(roles: [SUPER_ADMIN]) @audit
+  revokeAdmin(id: UUID!): Boolean! @auth(roles: [SUPER_ADMIN]) @audit
+
+  # Notifications / broadcast
+  broadcastNotification(input: BroadcastInput!): BroadcastResult!
+    @auth(roles: [SUPER_ADMIN, OPS]) @audit
+}
+
+type Subscription {
+  liveOrders(restaurantId: UUID): OrderEvent! @auth(roles: [SUPER_ADMIN, OPS])
+  liveClaims: ClaimEvent! @auth(roles: [SUPER_ADMIN, OPS])
+  liveReports: ReportEvent! @auth(roles: [SUPER_ADMIN, CONTENT_MOD])
+  liveMetrics(metric: LiveMetricKind!): LiveMetricEvent! @auth(roles: [SUPER_ADMIN, OPS])
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMON
+# ─────────────────────────────────────────────────────────────────────────────
+type AdminUser {
+  id: UUID!
+  email: String!
+  name: String!
+  role: AdminRole!
+  lastSeenAt: DateTime
+  createdAt: DateTime!
+}
+
+input Page {
+  limit: Int = 20
+  cursor: String
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+  total: Int
+}
+
+type HealthStatus {
+  api: Boolean!
+  database: Boolean!
+  redis: Boolean!
+  kafka: Boolean!
+  ai: Boolean!
+  ts: DateTime!
+}
+
+input Period {
+  start: DateTime!
+  end: DateTime!
+  granularity: PeriodGranularity = DAY
+}
+
+enum PeriodGranularity { HOUR DAY WEEK MONTH }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USERS
+# ─────────────────────────────────────────────────────────────────────────────
+type User {
+  id: UUID!
+  phone: String
+  email: String
+  username: String
+  displayName: String
+  city: String
+  district: String
+  isPremium: Boolean!
+  premiumUntil: DateTime
+  level: Int!
+  foodieClass: String!
+  status: UserStatus!
+  reviewsCount: Int!
+  followersCount: Int!
+  joinedAt: DateTime!
+  lastSeenAt: DateTime
+  subscriptions: [Subscription!]!
+  recentOrders(limit: Int = 10): [Order!]!
+  flags: [UserFlag!]!
+}
+
+enum UserStatus { ACTIVE PAUSED SUSPENDED DELETED }
+
+type UserFlag {
+  kind: String!
+  reason: String!
+  createdAt: DateTime!
+  createdBy: UUID
+}
+
+input UserFilter {
+  q: String
+  status: UserStatus
+  premium: Boolean
+  city: String
+  joinedSince: DateTime
+}
+
+type UserConnection {
+  nodes: [User!]!
+  pageInfo: PageInfo!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESTAURANTS
+# ─────────────────────────────────────────────────────────────────────────────
+type Restaurant {
+  id: UUID!
+  name: String!
+  slug: String!
+  city: String
+  district: String
+  address: String
+  phone: String
+  isVerified: Boolean!
+  isClaimed: Boolean!
+  isSponsored: Boolean!
+  sponsorUntil: DateTime
+  ratingAvg: Float!
+  ratingCount: Int!
+  qualityScore: Float
+  cuisineTags: [String!]!
+  vibeTags: [String!]!
+  status: String!
+  owner: User
+  ownerSince: DateTime
+  sources: [DataSource!]!
+  liveStatus: RestaurantLive
+  menu(limit: Int = 50): [MenuItem!]!
+  recentReviews(limit: Int = 20): [Review!]!
+  weeklyOrders(period: Period): [TimeSeries!]!
+  audits: [AuditEntry!]!
+}
+
+type DataSource {
+  source: String!
+  sourceId: String!
+  firstSeen: DateTime!
+  lastSynced: DateTime!
+  url: String
+}
+
+type RestaurantLive {
+  isOpen: Boolean!
+  crowdedness: Float
+  waitMinutes: Int
+  recentOrders24h: Int
+}
+
+type MenuItem {
+  id: UUID!
+  foodId: UUID
+  name: String!
+  priceVnd: Int!
+  available: Boolean!
+  isSignature: Boolean!
+}
+
+input RestaurantFilter {
+  q: String
+  city: String
+  district: String
+  cuisine: String
+  isVerified: Boolean
+  isClaimed: Boolean
+  qualityScoreMin: Float
+  status: String
+}
+
+type RestaurantConnection {
+  nodes: [Restaurant!]!
+  pageInfo: PageInfo!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FOODS
+# ─────────────────────────────────────────────────────────────────────────────
+type Food {
+  id: UUID!
+  nameVi: String!
+  nameEn: String
+  slug: String!
+  primaryImage: String
+  cuisine: String
+  category: String
+  originRegion: String
+  popularity: Int!
+  trendingScore: Float!
+  ratingAvg: Float!
+  status: String!
+  dietTags: [String!]!
+  moodTags: [String!]!
+  flavorTags: [String!]!
+  allergens: [String!]!
+  spicyLevel: Int
+}
+
+input FoodInput {
+  id: UUID
+  nameVi: String!
+  nameEn: String
+  description: String
+  primaryImage: String
+  cuisine: String
+  category: String
+  originRegion: String
+  dietTags: [String!]
+  moodTags: [String!]
+  flavorTags: [String!]
+  allergens: [String!]
+  avgCalories: Int
+  avgPriceVnd: Int
+  cookTimeMin: Int
+  difficulty: Int
+}
+
+input FoodFilter {
+  q: String
+  cuisine: String
+  category: String
+  status: String
+  trendingMin: Float
+}
+
+type FoodConnection {
+  nodes: [Food!]!
+  pageInfo: PageInfo!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLAIMS
+# ─────────────────────────────────────────────────────────────────────────────
+type RestaurantClaim {
+  id: UUID!
+  restaurant: Restaurant!
+  claimant: User!
+  status: ClaimStatus!
+  position: String
+  contactEmail: String
+  contactPhone: String
+  phoneOtpPassed: Boolean!
+  licenseUrl: String
+  licenseOcr: JSON
+  licenseScore: Float
+  geoVerified: Boolean!
+  emailDomainMatch: Boolean!
+  totalScore: Float
+  notes: String
+  reviewedBy: AdminUser
+  reviewedAt: DateTime
+  createdAt: DateTime!
+  resolvedAt: DateTime
+  events: [ClaimEventEntry!]!
+}
+
+enum ClaimStatus {
+  PENDING
+  VERIFYING
+  AUTO_APPROVED
+  MANUAL_REVIEW
+  APPROVED
+  REJECTED
+  REVOKED
+  TRANSFERRED
+}
+
+type ClaimEventEntry {
+  type: String!
+  data: JSON
+  at: DateTime!
+}
+
+input ClaimFilter {
+  status: ClaimStatus
+  city: String
+  scoreMin: Float
+}
+
+type ClaimConnection {
+  nodes: [RestaurantClaim!]!
+  pageInfo: PageInfo!
+}
+
+type ClaimEvent {
+  type: String!
+  claim: RestaurantClaim!
+  at: DateTime!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REVIEWS / MODERATION
+# ─────────────────────────────────────────────────────────────────────────────
+type Review {
+  id: UUID!
+  user: User!
+  restaurant: Restaurant
+  food: Food
+  rating: Int!
+  title: String
+  content: String
+  images: [String!]!
+  isVerified: Boolean!
+  isFlagged: Boolean!
+  hiddenAt: DateTime
+  hiddenReason: String
+  qualityScore: Float
+  createdAt: DateTime!
+}
+
+input ReviewFilter {
+  userId: UUID
+  restaurantId: UUID
+  isFlagged: Boolean
+  hidden: Boolean
+  minRating: Int
+  maxRating: Int
+}
+
+type ReviewConnection {
+  nodes: [Review!]!
+  pageInfo: PageInfo!
+}
+
+type Report {
+  id: UUID!
+  reporter: User!
+  targetType: String!
+  targetId: UUID!
+  reason: String!
+  details: JSON
+  severity: ReportSeverity!
+  status: ReportStatus!
+  resolvedBy: AdminUser
+  resolvedAt: DateTime
+  resolution: ReportAction
+  createdAt: DateTime!
+}
+
+enum ReportSeverity { LOW MEDIUM HIGH CRITICAL }
+enum ReportStatus { OPEN IN_REVIEW RESOLVED DISMISSED }
+enum ReportAction { APPROVED HIDDEN REMOVED USER_WARNED USER_BANNED NO_ACTION }
+
+type ReportConnection {
+  nodes: [Report!]!
+  pageInfo: PageInfo!
+}
+
+type ReportEvent {
+  report: Report!
+  type: String!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ORDERS
+# ─────────────────────────────────────────────────────────────────────────────
+type Order {
+  id: UUID!
+  user: User!
+  restaurant: Restaurant!
+  partner: String!
+  totalVnd: Int!
+  status: String!
+  placedAt: DateTime!
+  deliveredAt: DateTime
+}
+
+type OrderEvent {
+  type: String!
+  order: Order!
+  at: DateTime!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI OPS
+# ─────────────────────────────────────────────────────────────────────────────
+type AiSession {
+  id: UUID!
+  user: User!
+  mode: String!
+  input: JSON
+  outputCards: JSON
+  reasonCodes: [String!]!
+  latencyMs: Int!
+  llmCostUsd: Float
+  feedback: JSON
+  createdAt: DateTime!
+}
+
+input AiSessionFilter {
+  userId: UUID
+  mode: String
+  minLatency: Int
+  hasFeedback: Boolean
+}
+
+type AiSessionConnection {
+  nodes: [AiSession!]!
+  pageInfo: PageInfo!
+}
+
+type AiQualityMetrics {
+  ctrAvg: Float!
+  saveRateAvg: Float!
+  skipRateAvg: Float!
+  userReportedBadRecPct: Float!
+  p50LatencyMs: Int!
+  p95LatencyMs: Int!
+  modeBreakdown: [ModeMetric!]!
+}
+
+type ModeMetric {
+  mode: String!
+  ctr: Float!
+  count: Int!
+}
+
+type AiCostBreakdown {
+  totalUsd: Float!
+  perDauUsd: Float!
+  byModel: [ModelCost!]!
+  byMode: [ModeCost!]!
+  byDay: [TimeSeries!]!
+}
+
+type ModelCost { model: String!, costUsd: Float!, calls: Int! }
+type ModeCost  { mode: String!, costUsd: Float!, calls: Int! }
+
+input PinSuggestionInput {
+  foodId: UUID!
+  scope: String!   # "city:HCM", "district:Quận 1", "global"
+  boost: Float!
+  until: DateTime!
+  reason: String!
+}
+type PinSuggestionResult { ok: Boolean!, id: UUID! }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# METRICS / GROWTH
+# ─────────────────────────────────────────────────────────────────────────────
+type MetricsOverview {
+  dau: Int!
+  wau: Int!
+  mau: Int!
+  newSignups: Int!
+  premiumActive: Int!
+  premiumMrrVnd: Int!
+  aiDecisionsToday: Int!
+  groupVotesToday: Int!
+  daus: [TimeSeries!]!
+}
+
+type TimeSeries {
+  ts: DateTime!
+  value: Float!
+}
+
+type CohortRetention {
+  cohortStart: DateTime!
+  size: Int!
+  retentionDays: [RetentionPoint!]!
+}
+
+type RetentionPoint {
+  day: Int!
+  pct: Float!
+}
+
+enum FunnelKind {
+  ONBOARDING
+  AI_DECIDE
+  PREMIUM_CHECKOUT
+  GROUP_VOTE
+  CLAIM_OWNERSHIP
+}
+
+type FunnelResult {
+  funnel: FunnelKind!
+  steps: [FunnelStep!]!
+}
+
+type FunnelStep {
+  name: String!
+  users: Int!
+  conversionPct: Float!
+}
+
+type AbTestResult {
+  experimentId: UUID!
+  name: String!
+  status: String!
+  arms: [AbArm!]!
+  primaryMetric: String!
+  winner: String
+  pValue: Float
+}
+
+type AbArm {
+  name: String!
+  trafficPct: Float!
+  users: Int!
+  conversion: Float!
+  uplift: Float
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FINANCE
+# ─────────────────────────────────────────────────────────────────────────────
+type RevenueDashboard {
+  totalVnd: Int!
+  byStream: [RevenueByStream!]!
+  byDay: [TimeSeries!]!
+}
+
+type RevenueByStream {
+  stream: String!
+  vnd: Int!
+}
+
+type Subscription {
+  id: UUID!
+  user: User!
+  plan: String!
+  status: String!
+  provider: String!
+  amountVnd: Int!
+  startedAt: DateTime!
+  currentPeriodEnd: DateTime
+}
+
+type SubscriptionStats {
+  active: Int!
+  trialing: Int!
+  cancelledLast30: Int!
+  mrrVnd: Int!
+  churnPct: Float!
+  ltvAvgVnd: Int!
+}
+
+type PartnerPayoutList {
+  total: Int!
+  items: [PartnerPayout!]!
+}
+
+type PartnerPayout {
+  partner: String!
+  ordersCount: Int!
+  commissionVnd: Int!
+  payoutVnd: Int!
+  due: DateTime!
+}
+
+type RefundResult {
+  ok: Boolean!
+  refundId: UUID!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VIRAL
+# ─────────────────────────────────────────────────────────────────────────────
+type ViralDish {
+  id: UUID!
+  food: Food
+  dishLabel: String!
+  velocityScore: Float!
+  diversityScore: Float!
+  totalViews: Int!
+  status: String!
+  detectedAt: DateTime!
+  peakAt: DateTime
+  videos: [ViralVideo!]!
+}
+
+type ViralVideo {
+  id: UUID!
+  platform: String!
+  externalUrl: String!
+  creatorHandle: String!
+  views: Int!
+  likes: Int!
+  postedAt: DateTime!
+}
+
+input ViralFilter {
+  status: String
+  region: String
+  cuisine: String
+  velocityMin: Float
+}
+
+type ViralDishConnection {
+  nodes: [ViralDish!]!
+  pageInfo: PageInfo!
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BROADCAST / NOTIFICATIONS
+# ─────────────────────────────────────────────────────────────────────────────
+input BroadcastInput {
+  segment: String!         # e.g. "premium", "city=HCM", "inactive_7d"
+  title: String!
+  body: String!
+  deeplink: String
+  imageUrl: String
+  scheduledFor: DateTime
+}
+
+type BroadcastResult {
+  id: UUID!
+  estimatedRecipients: Int!
+  scheduledFor: DateTime
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUDIT
+# ─────────────────────────────────────────────────────────────────────────────
+type AuditEntry {
+  id: ID!
+  admin: AdminUser
+  action: String!
+  targetType: String!
+  targetId: UUID
+  before: JSON
+  after: JSON
+  ipInet: String
+  at: DateTime!
+}
+
+input AuditFilter {
+  adminId: UUID
+  action: String
+  targetType: String
+  targetId: UUID
+  since: DateTime
+  until: DateTime
+}
+
+type AuditConnection {
+  nodes: [AuditEntry!]!
+  pageInfo: PageInfo!
+}
+
+enum LiveMetricKind {
+  DAU
+  ORDERS
+  PREMIUM_SIGNUPS
+  AI_DECISIONS
+  ERROR_RATE
+}
+
+type LiveMetricEvent {
+  metric: LiveMetricKind!
+  ts: DateTime!
+  value: Float!
+}
