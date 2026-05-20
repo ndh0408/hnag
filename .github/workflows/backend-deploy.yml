@@ -1,0 +1,71 @@
+name: Backend · Deploy
+
+on:
+  workflow_run:
+    workflows: ['Backend · CI']
+    types: [completed]
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env:
+          - { name: staging,    branch: develop, cluster: hnag-stage-eks, ns: hnag, host: api-stage.tothanhthuy.cloud }
+          - { name: production, branch: main,    cluster: hnag-prod-eks,  ns: hnag, host: api.tothanhthuy.cloud }
+    steps:
+      - name: Match branch
+        id: match
+        run: |
+          if [ "${{ github.event.workflow_run.head_branch }}" = "${{ matrix.env.branch }}" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.match.outputs.should_deploy == 'true'
+        uses: actions/checkout@v4
+
+      - if: steps.match.outputs.should_deploy == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-1
+
+      - if: steps.match.outputs.should_deploy == 'true'
+        name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ matrix.env.cluster }} --region ap-southeast-1
+
+      - if: steps.match.outputs.should_deploy == 'true'
+        name: Install Argo Rollouts kubectl plugin
+        run: |
+          curl -fsSLO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x ./kubectl-argo-rollouts-linux-amd64
+          sudo mv ./kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+      - if: steps.match.outputs.should_deploy == 'true'
+        name: Trigger Argo Rollout (canary)
+        env:
+          REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          NS: ${{ matrix.env.ns }}
+        run: |
+          kubectl argo rollouts -n "$NS" set image hnag-backend \
+            hnag-backend="$REGISTRY/hnag-backend:$SHA"
+          echo "Rollout started for ${{ matrix.env.name }}"
+
+      - if: steps.match.outputs.should_deploy == 'true'
+        name: Wait for promotion (canary analysis)
+        timeout-minutes: 30
+        run: |
+          kubectl argo rollouts -n "${{ matrix.env.ns }}" status hnag-backend --watch
+
+      - if: failure() && steps.match.outputs.should_deploy == 'true'
+        name: Abort rollout
+        run: kubectl argo rollouts -n "${{ matrix.env.ns }}" abort hnag-backend

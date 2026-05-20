@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hnag
+  labels:
+    name: hnag
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: hnag-quota, namespace: hnag }
+spec:
+  hard:
+    requests.cpu: "40"
+    requests.memory: 80Gi
+    limits.cpu: "80"
+    limits.memory: 160Gi
+    persistentvolumeclaims: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: hnag-limits, namespace: hnag }
+spec:
+  limits:
+    - default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      type: Container

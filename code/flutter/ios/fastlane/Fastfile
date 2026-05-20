@@ -1,0 +1,103 @@
+# =============================================================================
+# HNAG — Fastlane for iOS builds
+# Run on macOS VM (SSH alias `vm` @ 100.98.136.38).
+# =============================================================================
+default_platform(:ios)
+
+WORKSPACE       = "Runner.xcworkspace"
+SCHEME          = "Runner"
+EXPORT_METHOD   = ENV["EXPORT_METHOD"] || "app-store"   # app-store|ad-hoc|development|enterprise
+BUILD_NUMBER    = ENV["BUILD_NUMBER"] || Time.now.strftime("%Y%m%d%H%M")
+OUTPUT_DIR      = "../build/ios/ipa"
+
+platform :ios do
+  before_all do
+    # ensure clean Flutter state
+    sh("cd ../.. && flutter clean")
+    sh("cd ../.. && flutter pub get")
+    cocoapods(repo_update: true, podfile: "./Podfile")
+  end
+
+  desc "Smoke: ensure project compiles"
+  lane :smoke do
+    sh("cd ../.. && flutter build ios --no-codesign --release")
+  end
+
+  desc "Build IPA (no upload) — use for sideload via Apple Configurator / AltStore"
+  lane :build do
+    increment_build_number_in_plist(build_number: BUILD_NUMBER)
+    sh("cd ../.. && flutter build ipa --release --build-number=#{BUILD_NUMBER} --export-method=#{EXPORT_METHOD}")
+    UI.success("✅ IPA at: build/ios/ipa/Runner.ipa")
+  end
+
+  desc "Build + upload to TestFlight (for internal testers)"
+  lane :beta do
+    setup_app_store_connect_api_key
+    increment_build_number_in_plist(build_number: BUILD_NUMBER)
+
+    sh("cd ../.. && flutter build ipa --release --build-number=#{BUILD_NUMBER}")
+
+    upload_to_testflight(
+      ipa: "../build/ios/ipa/hnag.ipa",
+      skip_waiting_for_build_processing: true,
+      changelog: ENV["CHANGELOG"] || "Internal build #{BUILD_NUMBER}",
+      distribute_external: false,
+      apple_id: ENV["APPLE_APP_ID"]
+    )
+
+    notify_slack("✅ TestFlight build #{BUILD_NUMBER} ready cho internal testers")
+  end
+
+  desc "Build + upload to TestFlight external group"
+  lane :external do
+    setup_app_store_connect_api_key
+    increment_build_number_in_plist(build_number: BUILD_NUMBER)
+    sh("cd ../.. && flutter build ipa --release --build-number=#{BUILD_NUMBER}")
+    upload_to_testflight(
+      ipa: "../build/ios/ipa/hnag.ipa",
+      groups: ["HNAG External Testers"],
+      changelog: ENV["CHANGELOG"] || "External beta #{BUILD_NUMBER}",
+      distribute_external: true,
+      notify_external_testers: true
+    )
+  end
+
+  desc "Build + submit to App Store review"
+  lane :release do
+    setup_app_store_connect_api_key
+    version = prompt(text: "Version (e.g., 1.0.0):")
+    increment_version_number_in_plist(version_number: version)
+    increment_build_number_in_plist(build_number: BUILD_NUMBER)
+    sh("cd ../.. && flutter build ipa --release --build-number=#{BUILD_NUMBER}")
+    upload_to_app_store(
+      ipa: "../build/ios/ipa/hnag.ipa",
+      submit_for_review: true,
+      automatic_release: false,
+      submission_information: { add_id_info_uses_idfa: false },
+      precheck_include_in_app_purchases: false,
+      force: true
+    )
+  end
+
+  # ─── helpers ───────────────────────────────────────────────────────
+
+  private_lane :setup_app_store_connect_api_key do
+    # ASC API key recommended over Apple ID (no 2FA prompts in CI)
+    app_store_connect_api_key(
+      key_id:      ENV["ASC_KEY_ID"],
+      issuer_id:   ENV["ASC_ISSUER_ID"],
+      key_content: ENV["ASC_KEY_CONTENT"],
+      duration:    1200,
+      in_house:    false
+    ) if ENV["ASC_KEY_ID"]
+  end
+
+  private_lane :notify_slack do |message|
+    return unless ENV["SLACK_WEBHOOK"]
+    slack(message: message, slack_url: ENV["SLACK_WEBHOOK"], default_payloads: [])
+  end
+
+  error do |lane, exception|
+    notify_slack("❌ Fastlane lane `#{lane}` failed: #{exception.message}")
+  end
+end

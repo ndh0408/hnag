@@ -1,0 +1,96 @@
+# =============================================================================
+# iOS build pipeline — SSH-tunnels into macOS VM (Tailscale) to build via Fastlane.
+# Triggers on push to develop (TestFlight internal) or manual dispatch (external/release).
+# =============================================================================
+name: iOS · TestFlight via VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: 'Fastlane lane'
+        type: choice
+        default: 'beta'
+        options: [smoke, build, beta, external, release]
+      changelog:
+        description: 'Changelog'
+        required: false
+        default: 'Auto build'
+  push:
+    branches: [develop]
+    paths: ['code/flutter/**', '.github/workflows/ios-vm-build.yml']
+
+concurrency:
+  group: ios-build
+  cancel-in-progress: false
+
+jobs:
+  build-via-vm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tailscale auth so we can reach 100.x.x.x
+      - name: Tailscale connect
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat >> ~/.ssh/config <<EOF
+          Host vm
+            HostName 100.98.136.38
+            User ndh0408
+            IdentityFile ~/.ssh/id_ed25519
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ServerAliveInterval 60
+          EOF
+
+      - name: Sync source to VM
+        run: |
+          rsync -az --delete \
+            --exclude='build' --exclude='.dart_tool' --exclude='Pods' \
+            --exclude='node_modules' --exclude='.git' \
+            ./ vm:~/hnag-ci/
+
+      - name: Run Fastlane on VM
+        env:
+          LANE: ${{ github.event.inputs.lane || 'beta' }}
+          CHANGELOG: ${{ github.event.inputs.changelog || format('Auto build {0}', github.sha) }}
+        run: |
+          ssh vm "bash -lc '
+            set -euxo pipefail
+            cd ~/hnag-ci/code/flutter
+            export FASTLANE_DISABLE_COLORS=1
+            export ASC_KEY_ID=${{ secrets.ASC_KEY_ID }}
+            export ASC_ISSUER_ID=${{ secrets.ASC_ISSUER_ID }}
+            export ASC_KEY_CONTENT=\"${{ secrets.ASC_KEY_CONTENT }}\"
+            export APPLE_ID=${{ secrets.APPLE_ID }}
+            export APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}
+            export APPLE_ITC_TEAM_ID=${{ secrets.APPLE_ITC_TEAM_ID }}
+            export APPLE_APP_ID=${{ secrets.APPLE_APP_ID }}
+            export CHANGELOG=\"$CHANGELOG\"
+            export BUILD_NUMBER=${{ github.run_number }}
+            cd ios && bundle install --quiet && bundle exec fastlane $LANE
+          '"
+
+      - name: Pull build artifacts
+        if: github.event.inputs.lane == 'build' || (success() && github.event.inputs.lane == 'smoke')
+        run: |
+          mkdir -p artifacts
+          scp -r 'vm:~/hnag-ci/code/flutter/build/ios/ipa/*.ipa' artifacts/ || true
+
+      - name: Upload IPA artifact
+        if: github.event.inputs.lane == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hnag-ios-${{ github.run_number }}.ipa
+          path: artifacts/*.ipa
+          retention-days: 30

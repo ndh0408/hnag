@@ -1,0 +1,148 @@
+# =============================================================================
+# Argo Rollout — canary deployment for HNAG backend.
+# Steps: 5% → analysis (1m) → 25% → analysis (3m) → 50% → analysis (5m) → 100%.
+# Auto-rollback if AnalysisRun fails (latency p95 > 1.4s or 5xx > 1%).
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: hnag-backend
+  namespace: hnag
+spec:
+  replicas: 6
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: hnag-backend }
+  template:
+    metadata:
+      labels: { app: hnag-backend }
+    spec:
+      serviceAccountName: hnag-backend
+      containers:
+        - name: hnag-backend
+          image: REGISTRY/hnag-backend:SHA      # patched by CI
+          ports:
+            - { containerPort: 4000, name: http }
+          envFrom:
+            - secretRef: { name: hnag-backend-secrets }
+            - configMapRef: { name: hnag-backend-config }
+          readinessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 8
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "300m", memory: "512Mi" }
+            limits:   { cpu: "1500m", memory: "1.5Gi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+  strategy:
+    canary:
+      canaryService: hnag-backend-canary
+      stableService: hnag-backend-stable
+      trafficRouting:
+        nginx:
+          stableIngress: hnag-backend
+      analysis:
+        templates:
+          - templateName: hnag-canary-success
+        startingStep: 1
+      steps:
+        - setWeight: 5
+        - pause: { duration: 1m }
+        - setWeight: 25
+        - pause: { duration: 3m }
+        - setWeight: 50
+        - pause: { duration: 5m }
+        - setWeight: 100
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: hnag-canary-success
+  namespace: hnag
+spec:
+  metrics:
+    - name: success-rate
+      interval: 30s
+      successCondition: result[0] >= 0.99
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            sum(rate(http_requests_total{app="hnag-backend",code!~"5.."}[1m]))
+              /
+            sum(rate(http_requests_total{app="hnag-backend"}[1m]))
+
+    - name: latency-p95
+      interval: 30s
+      successCondition: result[0] < 1.4
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{app="hnag-backend"}[1m]))
+                by (le)
+            )
+
+    - name: ai-suggest-error-rate
+      interval: 30s
+      successCondition: result[0] < 0.02
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            sum(rate(http_requests_total{app="hnag-backend",path="/v1/ai/suggest",code=~"5.."}[1m]))
+              /
+            sum(rate(http_requests_total{app="hnag-backend",path="/v1/ai/suggest"}[1m]))
+---
+apiVersion: v1
+kind: Service
+metadata: { name: hnag-backend-stable, namespace: hnag }
+spec:
+  selector: { app: hnag-backend }
+  ports:
+    - { port: 80, targetPort: 4000, name: http }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: hnag-backend-canary, namespace: hnag }
+spec:
+  selector: { app: hnag-backend }
+  ports:
+    - { port: 80, targetPort: 4000, name: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hnag-backend
+  namespace: hnag
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: hnag-backend
+  minReplicas: 6
+  maxReplicas: 60
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+    - type: Resource
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: hnag-backend, namespace: hnag }
+spec:
+  minAvailable: 60%
+  selector:
+    matchLabels: { app: hnag-backend }

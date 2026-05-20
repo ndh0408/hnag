@@ -1,0 +1,102 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hnag-backend
+  namespace: hnag
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"     # for video/image uploads
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/server-snippet: |
+      add_header X-Frame-Options DENY always;
+      add_header X-Content-Type-Options nosniff always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+      add_header Referrer-Policy no-referrer-when-downgrade always;
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Argo Rollouts uses this annotation for traffic split
+    nginx.ingress.kubernetes.io/canary: "false"
+spec:
+  tls:
+    - hosts: [api.tothanhthuy.cloud]
+      secretName: hnag-api-tls
+  rules:
+    - host: api.tothanhthuy.cloud
+      http:
+        paths:
+          # WebSocket — sticky path
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: hnag-backend-stable
+                port: { number: 80 }
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: hnag-backend-stable
+                port: { number: 80 }
+          - path: /graphql
+            pathType: Prefix
+            backend:
+              service:
+                name: hnag-backend-stable
+                port: { number: 80 }
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: hnag-backend-stable
+                port: { number: 80 }
+---
+# Canary ingress (managed by Argo Rollouts)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hnag-backend-canary
+  namespace: hnag
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "0"   # Rollouts patches this
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [api.tothanhthuy.cloud]
+      secretName: hnag-api-tls
+  rules:
+    - host: api.tothanhthuy.cloud
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: hnag-backend-canary
+                port: { number: 80 }
+---
+# Owner Dashboard
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hnag-dashboard
+  namespace: hnag
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [dash.tothanhthuy.cloud]
+      secretName: hnag-dash-tls
+  rules:
+    - host: dash.tothanhthuy.cloud
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hnag-owner-dashboard
+                port: { number: 80 }

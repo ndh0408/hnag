@@ -1,0 +1,48 @@
+# Local dev stack — postgres + redis + (optional) backend
+# Usage: docker compose -f code/infra/docker-compose.yml up -d
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hnag
+      POSTGRES_PASSWORD: hnag
+      POSTGRES_DB: hnag
+    ports: ["5432:5432"]
+    volumes:
+      - hnag-pg:/var/lib/postgresql/data
+      - ../sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ../sql/02_seed_data.sql:/docker-entrypoint-initdb.d/02_seed_data.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hnag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://hnag:hnag@postgres:5432/hnag?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret
+    ports: ["4000:4000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    profiles: ["full"]
+
+volumes:
+  hnag-pg:
