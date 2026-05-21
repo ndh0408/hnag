@@ -10,7 +10,7 @@
 
 ---
 
-## 🚀 Live status (2026-05-19)
+## 🚀 Live status (2026-05-20)
 
 **Deployment:** Self-host trên `ServerLinux` (Tailscale `100.100.210.85`) chạy chung với realm-* + Palworld trong cùng Docker stack riêng (network `hnag-internal`). Public access qua **Cloudflare Tunnel** (4 connections HKG region) — không expose port nào.
 
@@ -20,13 +20,14 @@
 | https://api.tothanhthuy.cloud/health | Health probe (db + cache) | ✅ `{"ok":true,"db":true,"cache":true}` |
 | https://dash.tothanhthuy.cloud | Owner Dashboard (Next.js 14) | ✅ LIVE |
 | https://app.tothanhthuy.cloud | APK download + static landing | ✅ LIVE |
-| https://app.tothanhthuy.cloud/hnag-latest.apk | Android APK (signed) | ✅ Installed on Xiaomi Redmi Note 13 Pro+ |
+| https://app.tothanhthuy.cloud/hnag-latest.apk | Android APK (signed) | ✅ Cài trên Xiaomi Redmi Note 13 Pro+ |
+| iOS app (Mapbox map + 14k quán) | Build ký + cài qua `devicectl` (`code/flutter/build-ios.example.sh`) | ✅ Cài + chạy trên iPhone Kayn |
 
-**Real data đã seed:**
-- 60 món Việt (phở, bún, cơm tấm, bánh mì, lẩu, chè, cafe…) với ảnh Unsplash đã verify
-- 30 quán ăn HCM + HN với rating + cuisine tags + geo points (PostGIS)
-- 12 achievements, viral dish trending scores tự tính
-- Restaurants có cover_image curated theo category
+**Real data (thật 100%, không sinh ảo):**
+- **14.319 quán ăn THẬT toàn quốc** — cào từ **OpenStreetMap** (`code/ingestion/scrape_restaurants.py`, 63 tỉnh), chuẩn hoá về **62 tỉnh thành** (`gen_city_normalize.py`). Geo points (PostGIS) + cuisine tags + giờ mở; `nearby` trả `lat/lng`.
+- **86 món Việt** với ảnh THẬT — 60 seed (Unsplash verify) + 26 cào từ **Wikidata/Wikimedia Commons** (ảnh có license, `scrape_foods_wikipedia.py`).
+- 12 achievements, viral dish trending scores tự tính.
+- ⏳ Ảnh từng quán (Google Places) — chờ cấu hình; data quán đã đầy đủ.
 
 **AI Public endpoints (no auth, no OpenAI key needed):**
 | Endpoint | Logic | Example output |
@@ -36,7 +37,7 @@
 | `GET /v1/ai/random?n=8` | Weighted random theo `popularity` | 8 món random cho Wheel |
 | `POST /v1/ai/fridge-recipes` | Match nguyên liệu vs `name_vi/description` | Recipes có dùng được + missing items |
 | `GET /v1/foods/trending?period=week` | Sort `trending_score` | Top trending |
-| `GET /v1/restaurants/nearby?lat&lng` | PostGIS `ST_DWithin` | Quán trong 5km có `_distance_m` |
+| `GET /v1/restaurants/nearby?lat&lng` | PostGIS `ST_DWithin` (14k quán) | Quán gần có `distance_m` + `lat`/`lng` (cho map pins) |
 
 **Flutter app — features đã wire vào API thật (no demo data):**
 
@@ -49,13 +50,15 @@
 | Fridge Scan → recipes | `POST /v1/ai/fridge-recipes` | `FridgeScanScreen` |
 | Voice "Hỏi Hà" (intent→mood) | `/v1/ai/mood-suggest` | `VoiceAssistantScreen` |
 | Search món/quán | `/v1/foods?q=` (name + slug OR search) | `SearchScreen` |
-| Quán gần đây | `/v1/restaurants/nearby` | `NearbyRestaurantsScreen` |
+| Quán gần đây (định vị thật) | `/v1/restaurants/nearby` | `NearbyRestaurantsScreen` (+ `geolocator`) |
+| Bản đồ Mapbox (pins quán thật) | `/v1/restaurants/nearby` (lat/lng) | `FoodMapScreen` (nút "Bản đồ" ở Quán gần đây) |
+| Đặt giao (deep-link) | GrabFood/ShopeeFood/Maps **search đúng tên** | `FoodDetailScreen` + AI Decide |
 | Food Detail (description + recipe) | `/v1/foods/:id` | `FoodDetailScreen` |
 | Notifications (AI + trending) | `aiMoodSuggest` + `trendingFoods` | `NotificationsScreen` |
 
-**Stack runtime:** PostgreSQL 15 + PostGIS 3.4 · Redis 7 · NestJS 10 (TypeScript) · Prisma 5 · Cloudflare Tunnel · Nginx static · Next.js 14 dashboard · Flutter 3.x APK signed với release keystore (alias `hnag`).
+**Stack runtime:** PostgreSQL 15 + PostGIS 3.4 · Redis 7 · NestJS 10 (TypeScript) · Prisma 5 · Cloudflare Tunnel · Nginx static · Next.js 14 dashboard · Flutter 3.x (Android APK signed + iOS ký/cài qua devicectl) · **Mapbox Maps SDK** trong app.
 
-**AI engine hiện tại:** Smart heuristic (time + mood + ingredient + category matching) chạy server-side — **không cần OpenAI key**. Phase 2 sẽ thêm GPT-4o-mini cho NLU phức tạp hơn (xem [docs/07-AI-ENGINES.md](docs/07-AI-ENGINES.md)).
+**AI engine hiện tại:** Smart heuristic (time + mood + ingredient + category) chạy server-side, **+ GPT-4o-mini đã wire** (OpenAI key cấu hình trên server cho NLU/reasoning; tự fallback heuristic nếu thiếu key). Maps & weather: **Mapbox** + **OpenWeather** key đã cấu hình. Xem [docs/07-AI-ENGINES.md](docs/07-AI-ENGINES.md).
 
 ---
 
@@ -153,8 +156,8 @@ Mỗi ngày, **người Việt mất trung bình 23 phút** để quyết địn
 | [code/flutter/ios/](code/flutter/ios/) | Fastlane (`Fastfile` + `Appfile`) for iOS builds + `setup-on-vm.sh` for macOS VM provisioning |
 | [code/backend/](code/backend/) | NestJS app (11 modules + Admin GraphQL resolvers): auth/OTP, AI orchestrator (7 services), restaurants+claim, groups+realtime voting, orders, subscriptions, notifications; Prisma; Dockerfile; **unit + e2e tests** |
 | [code/owner-dashboard/](code/owner-dashboard/) | Next.js 14 + Tailwind dashboard for restaurant owners: login (phone OTP), sidebar, live status control, stats cards, orders + reviews real-time |
-| [code/ingestion/](code/ingestion/) | Airflow Python DAGs: TikTok viral food (hourly) + Foursquare restaurants (weekly); Dedup util with `rapidfuzz` |
-| [code/sql/](code/sql/) | PostgreSQL schema (60+ tables, PostGIS, triggers) + seed (60 món Việt, 30 quán HCM+HN, achievements, viral dishes) |
+| [code/ingestion/](code/ingestion/) | **Scrapers đang dùng (real data):** `scrape_restaurants.py` (OSM Overpass → 14k quán), `scrape_foods_wikipedia.py` (Wikidata/Wikimedia → món + ảnh thật), `gen_city_normalize.py` (chuẩn hoá 62 tỉnh). + Airflow DAGs (TikTok/Foursquare) để dành; dedup `rapidfuzz` |
+| [code/sql/](code/sql/) | PostgreSQL schema (60+ tables, PostGIS, triggers) + seed gốc (60 món, 30 quán). **DB thực tế: 14.319 quán + 86 món** đã đổ từ `code/ingestion/` |
 | [code/api/openapi.yaml](code/api/openapi.yaml) | OpenAPI 3.1 spec — 60+ endpoints |
 | [code/api/postman_collection.json](code/api/postman_collection.json) | Postman ready-to-run collection |
 | [code/graphql/admin_schema.graphql](code/graphql/admin_schema.graphql) | Admin GraphQL schema (RBAC directives, queries/mutations/subscriptions) + working resolvers |
@@ -182,9 +185,9 @@ Mỗi ngày, **người Việt mất trung bình 23 phút** để quyết địn
 ## 🏗️ Tech Stack
 
 ### Currently deployed (Phase 1 — LIVE)
-**Frontend:** Flutter 3.x (Android APK signed) · Next.js 14 (owner dashboard)
+**Frontend:** Flutter 3.x (Android APK signed + iOS ký/cài qua devicectl) · **Mapbox Maps SDK** · Next.js 14 (owner dashboard)
 **Backend:** NestJS 10 (TypeScript) · PostgreSQL 15 + PostGIS 3.4 · Redis 7 · Prisma 5
-**AI:** Heuristic decision engine (time-aware + mood→tag mapping + ingredient/name matching) — no LLM dependency yet
+**AI:** Heuristic engine (time + mood→tag + ingredient/name) **+ GPT-4o-mini đã wire** (OpenAI key cấu hình, fallback heuristic). Maps **Mapbox** + weather **OpenWeather** đã cấu hình.
 **Infra:** Self-host trên `ServerLinux` (docker-compose) · Cloudflare Tunnel (no port exposure) · DNS `tothanhthuy.cloud` (Cloudflare)
 
 ### Phase 2 roadmap (planned)

@@ -6,6 +6,18 @@
 
 ---
 
+## ✅ Đã triển khai (cập nhật 2026-05)
+
+Thực tế đã có (không cần đợi partnership), tất cả từ nguồn **THẬT + hợp pháp + free**:
+- **14.319 quán thật toàn quốc** từ **OpenStreetMap** (ODbL) — `code/ingestion/scrape_restaurants.py` (Overpass, 63 tỉnh) + `gen_city_normalize.py` (chuẩn hoá 62 tỉnh). Backend `nearby` trả `lat/lng` cho map.
+- **86 món + ảnh thật** từ **Wikidata/Wikimedia Commons** (CC) — `code/ingestion/scrape_foods_wikipedia.py`.
+- **Ảnh từng quán** (đĩa đồ ăn per-quán): chỉ có qua **Google Places / Foursquare** — cả hai đều **cần billing** (không có nguồn free). Đang chờ cấu hình Google Places.
+- **KHÔNG cào API app giao hàng** (Grab/Shopee/Be) — vi phạm ToS + bản quyền (xem §1, §16). Chỉ đi đường partnership chính thức nếu cần.
+
+Phần dưới là **chiến lược đầy đủ** (partnership, Foursquare, TikTok, Foody license…) cho giai đoạn scale — tham khảo, chưa triển khai.
+
+---
+
 ## ⚠️ 1. Pháp lý & ToS — đọc TRƯỚC khi code
 
 Trước khi bàn kỹ thuật, đây là **5 nguyên tắc bất biến**:
