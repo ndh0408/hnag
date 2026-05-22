@@ -6,6 +6,7 @@ import { Controller, Get, Query, Post, Body } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { FridgeService } from './services/fridge.service';
 
 const MOOD_FILTERS: Record<string, { tags: string[]; categories: string[]; reason: string }> = {
   happy:      { tags: ['vui', 'celebrate'],  categories: ['grill', 'snack', 'dessert'], reason: 'Vui mà — quẩy chút đi' },
@@ -24,7 +25,10 @@ const MOOD_FILTERS: Record<string, { tags: string[]; categories: string[]; reaso
 @Throttle({ default: { limit: 30, ttl: 60_000 } })
 @Controller('ai')
 export class AiPublicController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fridge: FridgeService,
+  ) {}
 
   /** Smart suggestion based on time of day + weather + budget (no auth needed). */
   @Get('suggest-public')
@@ -123,67 +127,10 @@ export class AiPublicController {
   /** From a list of ingredients → return foods that can be made. */
   @Post('fridge-recipes')
   async fridgeRecipes(@Body() body: { ingredients: string[]; timeMin?: number }) {
-    // Bound the (unauthenticated) input to avoid CPU/DB amplification.
-    const ings = (Array.isArray(body.ingredients) ? body.ingredients : [])
-      .slice(0, 30)
-      .map((s) => String(s).toLowerCase().trim().slice(0, 40))
-      .filter(Boolean);
+    // Shared matching logic (also used by the vision-based /ai/fridge-scan).
+    const ings = Array.isArray(body.ingredients) ? body.ingredients.slice(0, 30) : [];
     if (ings.length === 0) return { recipes: [] };
-    const maxTime = Math.min(Math.max(Number(body.timeMin) || 60, 1), 240);
-
-    // Match foods by name/description containing any user ingredient.
-    const all = await this.prisma.foods.findMany({
-      where: {
-        status: 'active',
-        cook_time_min: { lte: maxTime },
-      },
-      take: 200,
-    });
-
-    const scored = all
-      .map((f) => {
-        const haystack = [
-          f.name_vi ?? '',
-          f.description ?? '',
-          JSON.stringify(f.ingredients ?? {}),
-          JSON.stringify(f.recipe ?? {}),
-          (f.flavor_tags ?? []).join(' '),
-          (f.diet_tags ?? []).join(' '),
-        ].join(' ').toLowerCase();
-        const matched = ings.filter((i) => haystack.includes(i));
-        return { food: f, hits: matched.length, matched };
-      })
-      .filter((s) => s.hits > 0)
-      .sort((a, b) => {
-        if (b.hits !== a.hits) return b.hits - a.hits;
-        return (a.food.cook_time_min ?? 60) - (b.food.cook_time_min ?? 60);
-      })
-      .slice(0, 5);
-
-    if (scored.length > 0) {
-      return {
-        recipes: scored.map((s) => ({
-          food: s.food,
-          uses: s.matched,
-          missing: ings.filter((i) => !s.matched.includes(i)),
-          tip: `Tận dụng ${s.hits}/${ings.length} nguyên liệu bạn có. Khoảng ${s.food.cook_time_min ?? 30} phút.`,
-        })),
-      };
-    }
-
-    // Fallback — pick fastest 3 easy recipes
-    const easy = all
-      .filter((f) => (f.cook_time_min ?? 60) <= 25)
-      .sort((a, b) => (a.cook_time_min ?? 60) - (b.cook_time_min ?? 60))
-      .slice(0, 3);
-    return {
-      recipes: easy.map((f) => ({
-        food: f,
-        uses: ings,
-        missing: ['cần thêm vài nguyên liệu phụ'],
-        tip: `Món dễ làm khoảng ${f.cook_time_min ?? 30} phút`,
-      })),
-    };
+    return this.fridge.matchRecipes(ings, body.timeMin ?? 60);
   }
 
   // ─── helpers ────────────────────────────────────────────────────────

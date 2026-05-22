@@ -5,6 +5,8 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { z } from 'zod';
 
 import { AiOrchestratorService } from './services/ai-orchestrator.service';
+import { FridgeService } from './services/fridge.service';
+import { VoiceService, audioExtFromMime } from './services/voice.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
@@ -44,12 +46,57 @@ const MatchLinkDto = z.object({
   location: z.object({ lat: z.number(), lng: z.number() }).optional(),
 });
 
+const FridgeScanDto = z.object({
+  // data URL or https URL; ~8MB base64 ≈ 6MB image
+  imageBase64: z.string().min(16).max(8_000_000),
+});
+
+const VoiceDto = z.object({
+  audioBase64: z.string().min(16).max(14_000_000),
+  mime: z.string().max(64).optional(),
+});
+
 @ApiTags('AI')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'))
 @Controller('ai')
 export class AiController {
-  constructor(private readonly orchestrator: AiOrchestratorService) {}
+  constructor(
+    private readonly orchestrator: AiOrchestratorService,
+    private readonly fridge: FridgeService,
+    private readonly voice: VoiceService,
+  ) {}
+
+  /** Fridge Scan — detect ingredients from a photo (GPT-4o vision) → recipes. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('fridge-scan')
+  @HttpCode(200)
+  async fridgeScan(
+    @CurrentUser() _u: JwtPayload,
+    @Body(new ZodValidationPipe(FridgeScanDto)) body: z.infer<typeof FridgeScanDto>,
+  ) {
+    const detected = await this.fridge.detectIngredients(body.imageBase64);
+    const result = await this.fridge.matchRecipes(detected);
+    return { detected, ...result };
+  }
+
+  /** Voice "Hỏi Hà" — Whisper transcribe → intent → suggestions. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('voice')
+  @HttpCode(200)
+  async voiceAsk(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(VoiceDto)) body: z.infer<typeof VoiceDto>,
+  ) {
+    const raw = body.audioBase64.replace(/^data:audio\/[^;]+;base64,/, '');
+    const buf = Buffer.from(raw, 'base64');
+    const transcript = await this.voice.transcribe(buf, `audio.${audioExtFromMime(body.mime)}`);
+    const intent = await this.voice.intent(transcript);
+    const result = intent.mood
+      ? await this.orchestrator.suggestByMood({ userId: user.sub, isPremium: !!user.isPremium, mood: intent.mood })
+      : await this.orchestrator.suggest({ userId: user.sub, isPremium: !!user.isPremium, mode: 'voice', context: { mood: intent.query }, limit: 6 });
+    return { transcript, intent, ...result };
+  }
 
   // Free users: 10/min · premium: unlimited (enforced inside orchestrator)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })

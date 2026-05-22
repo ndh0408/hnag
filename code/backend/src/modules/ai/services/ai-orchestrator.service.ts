@@ -85,14 +85,43 @@ export class AiOrchestratorService {
       enriched,
     });
 
-    // 5. Diversity + final top-N
-    const finalTop = this.ranker.diversify(ranked, req.limit);
-
-    // 6. LLM reason (batched for cost). Bounded by a per-user daily LLM budget so
-    // a scripted account (even premium) can't run up unbounded OpenAI spend; over
-    // budget we still return suggestions using the static fallback lines.
+    // 5. Selection. Bounded by a per-user daily LLM budget so a scripted account
+    // (even premium) can't run up unbounded OpenAI spend.
     const allowLlm = await this.consumeLlmBudget(req.userId, req.isPremium);
-    const reasons = await this.reason.batch(finalTop, enriched, { allowLlm });
+    const wantLlmSelect = allowLlm && (req.mode === 'mood' || req.mode === 'detail' || !!enriched.mood || !!enriched.inferredMood);
+
+    let finalTop: typeof ranked = [];
+    let reasons: string[] = [];
+
+    // 5a. Let the LLM actually choose for mood/detail flows (validated → no hallucination).
+    if (wantLlmSelect) {
+      const picks = await this.reason.select(ranked.slice(0, 15), enriched, req.limit);
+      if (picks?.length) {
+        const byId = new Map(ranked.map((c) => [c.foodId, c] as const));
+        for (const p of picks) {
+          const c = byId.get(p.foodId);
+          if (c) { finalTop.push(c); reasons.push(p.reason); }
+        }
+      }
+    }
+    const usedLlmForSelect = reasons.some((r) => !!r);
+
+    // 5b. Heuristic diversify to fill / as the default path.
+    if (finalTop.length < req.limit) {
+      for (const c of this.ranker.diversify(ranked, req.limit)) {
+        if (!finalTop.includes(c)) { finalTop.push(c); reasons.push(''); }
+        if (finalTop.length >= req.limit) break;
+      }
+    }
+    finalTop = finalTop.slice(0, req.limit);
+    reasons = reasons.slice(0, req.limit);
+
+    // 6. Fill any empty reasons with captions. If the LLM already chose, use the
+    // cheap fallback for the remainder to bound cost.
+    if (reasons.some((r) => !r)) {
+      const captions = await this.reason.batch(finalTop, enriched, { allowLlm: allowLlm && !usedLlmForSelect });
+      reasons = finalTop.map((_, i) => (reasons[i] && reasons[i].length ? reasons[i] : (captions[i] ?? '')));
+    }
 
     // 7. Build cards
     const sessionId = uuid();
@@ -183,8 +212,8 @@ export class AiOrchestratorService {
       },
     });
 
-    // Update taste vector online (alpha based on action)
-    await this.taste.applyImplicitFeedback(input.userId, input.foodId, input.action);
+    // Update taste vector online (real embedding EMA; rating-aware)
+    await this.taste.applyImplicitFeedback(input.userId, input.foodId, input.action, input.rating);
 
     // Update streak if action triggers it
     if (['save', 'order', 'dine', 'cook'].includes(input.action)) {

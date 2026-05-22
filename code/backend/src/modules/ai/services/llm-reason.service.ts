@@ -68,6 +68,62 @@ export class LlmReasonService {
     return reasons;
   }
 
+  /**
+   * Let the LLM actually CHOOSE the best `limit` dishes for the context and
+   * explain each. Returns picks by foodId with reasons. Strictly validated
+   * against the candidate set (indices only) so it cannot hallucinate a dish.
+   * Returns null on any failure → caller falls back to the heuristic ranker.
+   */
+  async select(
+    cards: Candidate[],
+    ctx: EnrichedContext,
+    limit: number,
+  ): Promise<{ foodId: string; reason: string }[] | null> {
+    const client = this.client;
+    if (!client || cards.length === 0) return null;
+    const list = cards
+      .map((c, i) => `${i}. ${c.title} | ${c.cuisine}, tags: ${c.tags.slice(0, 4).join(',')} | ${c.priceVnd}đ | ${c.rating.avg}★`)
+      .join('\n');
+    const user = `NGỮ CẢNH user:
+- Thời tiết: ${ctx.weather.condition}, ${ctx.weather.temp}°C · Giờ: ${ctx.hour}h
+- Mood: ${ctx.mood ?? ctx.inferredMood ?? 'không rõ'} · Đi cùng: ${ctx.with ?? 'solo'} · Ngân sách tối đa: ${ctx.budget?.max ?? '?'}đ
+
+DANH SÁCH MÓN (chọn TỪ đây, theo index):
+${list}
+
+Chọn ${limit} món hợp NHẤT với ngữ cảnh, đa dạng (không trùng kiểu). Mỗi món 1 câu ≤22 từ giải thích vì sao hợp.
+CHỈ trả về index có trong danh sách. JSON: { "picks": [ {"i": 0, "reason": "..."}, ... ] }`;
+
+    try {
+      const completion = await client.chat.completions.create({
+        model: 'gpt-4o-mini',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'Bạn là Hà — chọn món ăn cho người Việt. Chỉ chọn trong danh sách được cho, không bịa.' },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.4,
+        max_tokens: 500,
+      });
+      const parsed = JSON.parse(completion.choices[0]?.message?.content ?? '{}');
+      const picks: { i: number; reason: string }[] = parsed.picks ?? [];
+      const out: { foodId: string; reason: string }[] = [];
+      const seen = new Set<number>();
+      for (const p of picks) {
+        const i = Number(p.i);
+        if (Number.isInteger(i) && i >= 0 && i < cards.length && !seen.has(i)) {
+          seen.add(i);
+          out.push({ foodId: cards[i].foodId, reason: String(p.reason ?? '').slice(0, 160) });
+        }
+        if (out.length >= limit) break;
+      }
+      return out.length ? out : null;
+    } catch (e) {
+      this.logger.warn(`LLM select failed, falling back to ranker: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
   private async callLlm(cards: Candidate[], ctx: EnrichedContext): Promise<string[]> {
     const user = `CONTEXT chung:
 - Thời tiết: ${ctx.weather.condition}, ${ctx.weather.temp}°C

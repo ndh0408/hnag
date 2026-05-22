@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { TasteVector } from './taste-memory.service';
 import { EnrichedContext } from './context-builder.service';
+import { EmbeddingService, cosine } from './embedding.service';
 
 export interface Candidate {
   foodId: string;
@@ -30,7 +31,10 @@ export interface Candidate {
 
 @Injectable()
 export class CandidateGeneratorService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly embeddings: EmbeddingService,
+  ) {}
 
   async generate(args: {
     userId: string;
@@ -61,10 +65,22 @@ export class CandidateGeneratorService {
 
     // Suppress recently shown
     const recent = new Set(args.enriched.recentFoodIds);
+    const pool = candidates.filter((f) => !recent.has(f.id));
 
-    return candidates
-      .filter((f) => !recent.has(f.id))
-      .map((f) => ({
+    // Content-based personalization: if the user's taste vector has signal,
+    // score every candidate by cosine similarity to it (real embeddings from
+    // Redis) and order by that. Cold users keep the trending order.
+    const userVec = args.userTaste?.embedding ?? [];
+    const hasTasteSignal = userVec.some((x) => x !== 0);
+    const embMap = hasTasteSignal
+      ? await this.embeddings.getFoodEmbeddings(pool.map((f) => f.id))
+      : new Map<string, number[]>();
+
+    const mapped = pool.map((f) => {
+      const emb = embMap.get(f.id);
+      const sim = emb ? cosine(userVec, emb) : 0;        // -1..1
+      const embSim = (sim + 1) / 2;                       // 0..1 for the ranker
+      return {
         foodId: f.id,
         title: f.name_vi,
         subtitle: undefined,
@@ -76,9 +92,16 @@ export class CandidateGeneratorService {
         tags: [...(f.flavor_tags ?? []), ...(f.mood_tags ?? []), ...(f.vibe_tags ?? [])],
         popularity: f.popularity ?? 0,
         trendingScore: Number(f.trending_score ?? 0),
-        origin: 'trending' as const,
-        scores: {},
-        reasonCodes: [],
-      }));
+        origin: (hasTasteSignal && emb ? 'similar' : 'trending') as 'similar' | 'trending',
+        scores: { embSim },
+        reasonCodes: hasTasteSignal && emb && sim > 0.3 ? ['taste_match'] : [],
+        _sim: sim,
+      };
+    });
+
+    if (hasTasteSignal) {
+      mapped.sort((a, b) => (b._sim - a._sim) || (b.trendingScore - a.trendingScore));
+    }
+    return mapped.map(({ _sim, ...c }) => c);
   }
 }

@@ -68,21 +68,26 @@ export class RankerService {
         // Popularity / trending
         scores.trending = Math.min(1, c.trendingScore / 100);
 
+        // Personal taste — real embedding cosine (set by candidate generator).
+        scores.taste = typeof c.scores.embSim === 'number' ? c.scores.embSim : 0.5;
+        if (scores.taste > 0.65) codes.push('taste_match');
+
         // Late night adjustment
         if (enriched.isLateNight) {
           const safe = ['cháo', 'mì gói', 'xôi', 'bánh mì'].some((k) => c.title.toLowerCase().includes(k));
           scores.lateNight = safe ? 1 : 0.2;
         } else scores.lateNight = 1;
 
-        // Final blend
+        // Final blend (taste embedding now carries real personalization weight)
         const final =
-          scores.cuisine * 0.20 +
-          scores.price * 0.15 +
-          scores.time * 0.10 +
-          scores.mood * 0.15 +
-          scores.weather * 0.10 +
-          scores.quality * 0.15 +
-          scores.trending * 0.10 +
+          scores.taste * 0.22 +
+          scores.cuisine * 0.13 +
+          scores.price * 0.12 +
+          scores.time * 0.08 +
+          scores.mood * 0.13 +
+          scores.weather * 0.08 +
+          scores.quality * 0.12 +
+          scores.trending * 0.07 +
           scores.lateNight * 0.05;
 
         scores.final = final;
