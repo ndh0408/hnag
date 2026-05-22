@@ -2,9 +2,10 @@ import { Injectable, Inject, Logger } from '@nestjs/common';
 import IORedis from 'ioredis';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { REDIS } from '../../../common/redis/redis.module';
+import { EMB_DIM } from './embedding.service';
 
 export interface TasteVector {
-  embedding: number[]; // 64-dim mini for runtime
+  embedding: number[]; // matches food embedding dim (EMB_DIM)
   interp: Record<string, number>;
   updatedAt: string;
 }
@@ -12,7 +13,7 @@ export interface TasteVector {
 @Injectable()
 export class TasteMemoryService {
   private readonly logger = new Logger(TasteMemoryService.name);
-  private readonly dim = 64;
+  private readonly dim = EMB_DIM;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -42,18 +43,27 @@ export class TasteMemoryService {
    * Online learning — EMA on item embedding, weighted by action strength.
    * Critical: never let allergens be reinforced.
    */
-  async applyImplicitFeedback(userId: string, foodId: string, action: string) {
+  async applyImplicitFeedback(userId: string, foodId: string, action: string, rating?: number) {
     const vec = await this.load(userId);
     const item = await this.itemEmbedding(foodId);
     if (!item) return;
 
-    const w = WEIGHTS[action] ?? 0;
+    // 'rate' carries a 1–5 score → map to a signed weight; others use the table.
+    let w = WEIGHTS[action] ?? 0;
+    if (action === 'rate' && rating != null) {
+      w = rating >= 4 ? (rating === 5 ? 0.8 : 0.4) : rating <= 2 ? (rating === 1 ? -0.5 : -0.25) : 0;
+    }
     if (w === 0) return;
 
-    const alpha = Math.min(0.05 * Math.abs(w), 0.15);
+    // Guard against a dimension mismatch (old 64-dim cold vectors etc.).
+    if (vec.embedding.length !== item.length) {
+      vec.embedding = new Array(item.length).fill(0);
+    }
+
+    const alpha = Math.min(0.05 * Math.abs(w) * 2, 0.15);
     const sign = Math.sign(w);
 
-    for (let i = 0; i < this.dim; i++) {
+    for (let i = 0; i < item.length; i++) {
       vec.embedding[i] = (1 - alpha) * vec.embedding[i] + alpha * sign * item[i];
     }
 
@@ -105,17 +115,15 @@ export class TasteMemoryService {
   }
 }
 
+// Keys MUST match the action enum used by recordFeedback / FeedbackDto.
 const WEIGHTS: Record<string, number> = {
-  viewed: 0.05,
-  saved: 0.20,
-  ordered: 0.50,
-  cooked: 0.40,
-  ate: 0.60,
-  rated: 0,
-  rated_5: 0.80,
-  rated_1: -0.50,
-  skipped: -0.10,
+  view: 0.05,
+  save: 0.20,
+  cook: 0.40,
+  order: 0.50,
   dine: 0.55,
+  skip: -0.10,
+  rate: 0, // handled via the `rating` argument
 };
 
 function cosine(a: number[], b: number[]): number {

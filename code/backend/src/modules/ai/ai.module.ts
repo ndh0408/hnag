@@ -11,6 +11,9 @@ import { CandidateGeneratorService } from './services/candidate-generator.servic
 import { RankerService } from './services/ranker.service';
 import { LlmReasonService } from './services/llm-reason.service';
 import { ContextBuilderService } from './services/context-builder.service';
+import { EmbeddingService } from './services/embedding.service';
+import { FridgeService } from './services/fridge.service';
+import { VoiceService } from './services/voice.service';
 
 @Module({
   imports: [HttpModule, AuthModule],
@@ -23,7 +26,10 @@ import { ContextBuilderService } from './services/context-builder.service';
     RankerService,
     LlmReasonService,
     ContextBuilderService,
+    EmbeddingService,
+    FridgeService,
+    VoiceService,
   ],
-  exports: [AiOrchestratorService, TasteMemoryService],
+  exports: [AiOrchestratorService, TasteMemoryService, EmbeddingService],
 })
 export class AiModule {}

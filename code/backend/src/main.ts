@@ -37,6 +37,10 @@ async function bootstrap() {
     credentials: true,
   });
 
+  // Larger JSON body limit for the base64 image (fridge-scan) and audio (voice)
+  // payloads. Bounded; abuse is limited by per-route throttling + auth.
+  app.useBodyParser('json', { limit: '16mb' });
+
   // Global pipes / interceptors / filters
   app.useGlobalPipes(
     new ValidationPipe({
