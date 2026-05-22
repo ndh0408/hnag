@@ -1,11 +1,24 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RestaurantsService } from './restaurants.service';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/strategies/jwt.strategy';
 
 @ApiTags('Restaurants')
 @Controller('restaurants')
 export class RestaurantsController {
   constructor(private readonly r: RestaurantsService) {}
+
+  @ApiBearerAuth() @UseGuards(AuthGuard('jwt'))
+  @Post(':id/reviews')
+  addReview(
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: { rating: number; title?: string; content?: string; images?: string[]; pricePaidVnd?: number },
+  ) {
+    return this.r.addReview(u.sub, id, body);
+  }
 
   @Get('nearby')
   nearby(
