@@ -1,0 +1,16 @@
+  Label  Name                                                                                      ResourceId    Class                          Coordinates
+      0  Quay lại                                                                                  back          android.widget.ImageView       (165,2638)
+      1  .. Chào mừng đến HNAG Mã đăng nhập đã gửi tới email                                                     android.widget.FrameLayout     (610,1356)
+         huy04082000@gmail.com Bằng việc tiếp tục, bạn đồng ý với Điều khoản & Chính sách bảo mật
+      2  ..                                                                                                      android.view.View              (610,394)
+      3  Chào mừng đến HNAG                                                                                      android.view.View              (610,700)
+      4  Mã đăng nhập đã gửi tới email                                                                           android.view.View              (610,910)
+         huy04082000@gmail.com
+      5  Mã xác thực (6 số)                                                                                      android.widget.EditText        (610,1162)
+         ------
+      6  Xác nhận                                                                                                android.widget.Button          (610,1405)
+      7  Đổi email                                                                                               android.widget.Button          (610,1594)
+      8  Bằng việc tiếp tục, bạn đồng ý với Điều khoản & Chính sách bảo mật                                      android.view.View              (610,1816)
+      9  huy04082000@gmail.com                                                                     content       android.widget.RelativeLayout  (634,1208)
+     10  skalamu89@gmail.com                                                                       content       android.widget.RelativeLayout  (634,1409)
+     11  cdu6520@gmail.com                                                                         content       android.widget.RelativeLayout  (634,1610)

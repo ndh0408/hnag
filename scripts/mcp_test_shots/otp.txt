@@ -1,0 +1,9 @@
+  Label  Name                                                                                                                                   ResourceId    Class                       Coordinates
+      0  .. Chào mừng đến HNAG Nhập email của bạn Email chưa đúng định dạng Bằng việc tiếp tục, bạn đồng ý với Điều khoản & Chính sách bảo mật                android.widget.FrameLayout  (610,1356)
+      1  ..                                                                                                                                                   android.view.View           (610,394)
+      2  Chào mừng đến HNAG                                                                                                                                   android.view.View           (610,700)
+      3  Nhập email của bạn                                                                                                                                   android.view.View           (610,877)
+      4  email@example.com                                                                                                                                    android.widget.EditText     (610,1069)
+      5  Email chưa đúng định dạng                                                                                                                            android.view.View           (610,1222)
+      6  Gửi mã qua email                                                                                                                                     android.widget.Button       (610,1381)
+      7  Bằng việc tiếp tục, bạn đồng ý với Điều khoản & Chính sách bảo mật                                                                                   android.view.View           (610,1612)

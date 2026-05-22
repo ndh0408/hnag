@@ -1,0 +1,11 @@
+  Label  Name                                         ResourceId    Class                       Coordinates
+      0  ..                                                         android.widget.FrameLayout  (610,1356)
+         Đừng đắn đo nữa,
+         Hà sẽ chọn cho bạn
+         AI hiểu khẩu vị, ngân sách, và cả tâm trạng
+      1  Bỏ qua                                                     android.widget.Button       (1063,208)
+      2  ..                                                         android.view.View           (610,1379)
+         Đừng đắn đo nữa,
+         Hà sẽ chọn cho bạn
+         AI hiểu khẩu vị, ngân sách, và cả tâm trạng
+      3  Tiếp tục                                                   android.widget.Button       (610,2535)

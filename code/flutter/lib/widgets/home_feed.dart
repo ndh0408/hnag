@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/food_card.dart';
 import '../theme/app_theme.dart';
+import '../api/location_service.dart';
 import 'mega_card.dart';
 import 'compact_card.dart';
 
@@ -51,14 +52,29 @@ class HomeFeed extends StatelessWidget {
   }
 }
 
-class _ContextHeader extends StatelessWidget implements PreferredSizeWidget {
+class _ContextHeader extends StatefulWidget implements PreferredSizeWidget {
   final int hour;
   const _ContextHeader({required this.hour});
   @override
   Size get preferredSize => const Size.fromHeight(72);
   @override
+  State<_ContextHeader> createState() => _ContextHeaderState();
+}
+
+class _ContextHeaderState extends State<_ContextHeader> {
+  String _place = LocationContext.fallbackLine;
+
+  @override
+  void initState() {
+    super.initState();
+    LocationService.context().then((c) {
+      if (mounted) setState(() => _place = c.line);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final greet = _greeting(hour);
+    final greet = _greeting(widget.hour);
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
@@ -92,7 +108,7 @@ class _ContextHeader extends StatelessWidget implements PreferredSizeWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(greet, style: AppTypography.bodyMd.copyWith(fontWeight: FontWeight.w700)),
-                      Text('HCM, Q1 · 28° mưa nhẹ',
+                      Text(_place,
                           style: AppTypography.caption.copyWith(color: Theme.of(context).hintColor)),
                     ],
                   ),

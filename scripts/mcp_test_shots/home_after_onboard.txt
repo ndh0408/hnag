@@ -1,0 +1,7 @@
+  Label  Name                                                                     ResourceId                                 Class                        Coordinates
+      0  Cho phép Hôm Nay Ăn Gì? truy cập vào thông tin vị trí của thiết bị này?  grant_dialog                               android.widget.LinearLayout  (609,1835)
+      1  Chính xác                                                                permission_location_accuracy_radio_fine    android.widget.RadioButton   (366,1684)
+      2  Gần đúng                                                                 permission_location_accuracy_radio_coarse  android.widget.RadioButton   (852,1684)
+      3  Trong khi dùng ứng dụng                                                  permission_allow_foreground_only_button    android.widget.Button        (609,2115)
+      4  Chỉ lần này                                                              permission_allow_one_time_button           android.widget.Button        (609,2301)
+      5  Không cho phép                                                           permission_deny_button                     android.widget.Button        (609,2487)

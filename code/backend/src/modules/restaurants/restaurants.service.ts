@@ -55,6 +55,51 @@ export class RestaurantsService {
     });
   }
 
+  /**
+   * Submit (or update) a user's review for a restaurant, then recompute the
+   * restaurant's real rating from all reviews. Ratings are 100% user-generated.
+   * `pricePaidVnd` lets the price come from real diners too (not scraped).
+   */
+  async addReview(
+    userId: string,
+    restaurantId: string,
+    dto: { rating: number; title?: string; content?: string; images?: string[]; pricePaidVnd?: number },
+  ) {
+    const rating = Math.min(Math.max(Math.round(Number(dto.rating) || 0), 1), 5);
+    const exists = await this.prisma.restaurants.findUnique({ where: { id: restaurantId }, select: { id: true } });
+    if (!exists) throw new NotFoundException('Quán không tồn tại');
+
+    const data = {
+      rating,
+      title: dto.title?.slice(0, 120) ?? null,
+      content: dto.content?.slice(0, 2000) ?? null,
+      images: Array.isArray(dto.images) ? dto.images.slice(0, 8) : [],
+      price_paid_vnd: dto.pricePaidVnd != null ? Math.max(0, Math.round(dto.pricePaidVnd)) : null,
+    };
+
+    // One review per user per restaurant: update if it already exists.
+    const prev = await this.prisma.reviews.findFirst({
+      where: { user_id: userId, restaurant_id: restaurantId },
+      select: { id: true },
+    });
+    const review = prev
+      ? await this.prisma.reviews.update({ where: { id: prev.id }, data })
+      : await this.prisma.reviews.create({ data: { ...data, user_id: userId, restaurant_id: restaurantId } });
+
+    const agg = await this.prisma.reviews.aggregate({
+      where: { restaurant_id: restaurantId },
+      _avg: { rating: true },
+      _count: { _all: true },
+    });
+    const ratingAvg = Number((agg._avg.rating ?? 0).toFixed?.(2) ?? agg._avg.rating ?? 0);
+    await this.prisma.restaurants.update({
+      where: { id: restaurantId },
+      data: { rating_avg: ratingAvg, rating_count: agg._count._all },
+    });
+
+    return { ok: true, review, rating_avg: ratingAvg, rating_count: agg._count._all, updated: !!prev };
+  }
+
   async reviews(restaurantId: string, sort: 'recent' | 'helpful' | 'rating', page: number) {
     const orderBy =
       sort === 'helpful' ? { helpful_count: 'desc' as const } :

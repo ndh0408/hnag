@@ -3,7 +3,19 @@
     "allow": [
       "Bash(ssh ServerLinux \"docker exec hnag-postgres psql -U hnag -d hnag -c '\\\\dt' 2>&1 | grep -iE 'group|poll|vote|subscription|meal|plan|device|notif|restaurant_food|menu'\")",
       "Bash(ssh -o ConnectTimeout=10 vm \"echo CONNECTED && hostname && whoami && sw_vers\")",
-      "WebSearch"
+      "WebSearch",
+      "Bash(sed 's/.*\\\\.//')",
+      "Bash(py --version)",
+      "Bash(adb version *)",
+      "Bash(adb devices *)",
+      "Bash(uv --version)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(adb shell *)",
+      "Bash(adb exec-out *)",
+      "Read(//c/Users/Admin/AppData/Local/Temp/**)",
+      "Bash(echo \"WINPATH=C:\\\\\\\\Users\\\\\\\\Admin\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\hnag_android_test.png\")",
+      "Bash(grep -v \"^$\")",
+      "Bash(claude mcp *)"
     ]
   }
 }

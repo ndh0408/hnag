@@ -1,0 +1,75 @@
+  Label  Name                                                           ResourceId    Class                                Coordinates
+      0  Chiều mát, làm tô nha .. .. Phú Thuận, TP.HCM · 33° nhiều mây                android.widget.FrameLayout           (610,1356)
+      1  .. Trending Near You Xem tất cả  ›                                           android.widget.ScrollView            (610,1212)
+      2  Tất cả ..                                                                    android.widget.HorizontalScrollView  (610,472)
+         Phở ..
+         Cơm ..
+         Bún ..
+         Bánh mì ..
+         Nướng
+      3  Tất cả                                                                       android.view.View                    (144,472)
+      4  ..                                                                           android.view.View                    (378,472)
+         Phở
+      5  ..                                                                           android.view.View                    (612,472)
+         Cơm
+      6  ..                                                                           android.view.View                    (846,472)
+         Bún
+      7  ..                                                                           android.view.View                    (1080,472)
+         Bánh mì
+      8  ..                                                                           android.view.View                    (1219,472)
+         Nướng
+      9  .. Trending                                                                  android.widget.ImageView             (610,1354)
+         Nem lụi
+         4.8  (1.6k)
+         60k ₫
+         ~800m
+         460 cal
+         Đang mở
+         Vừa
+         ✨
+         "Món vui vẻ cho buổi gặp gỡ" — Hà
+     10  Nấu                                                                          android.view.View                    (210,1937)
+     11  Đặt giao · 12 phút                                                           android.view.View                    (575,1937)
+     12  Đi ăn                                                                        android.view.View                    (975,1937)
+     13  .. Trending Near You                                                         android.view.View                    (406,2220)
+     14  Xem tất cả  ›                                                                android.view.View                    (1045,2221)
+     15  Bánh bèo                                                                     android.widget.HorizontalScrollView  (610,2362)
+         40k ₫
+         ·
+         ~800m
+         4.7 Cà phê sữa đá
+         25k ₫
+         ·
+         ~800m
+         4.1 Cơm tấm sườn
+         55k ₫
+         ·
+         ~800m
+         4.7
+     16  Bánh bèo                                                                     android.widget.ImageView             (300,2362)
+         40k ₫
+         ·
+         ~800m
+         4.7
+     17  Cà phê sữa đá                                                                android.widget.ImageView             (840,2362)
+         25k ₫
+         ·
+         ~800m
+         4.1
+     18  Cơm tấm sườn                                                                 android.widget.ImageView             (1174,2362)
+         55k ₫
+         ·
+         ~800m
+         4.7
+     19  Chiều mát, làm tô nha ..                                                     android.view.View                    (467,157)
+     20  ..                                                                           android.view.View                    (102,184)
+     21  Phú Thuận, TP.HCM · 33° nhiều mây                                            android.view.View                    (534,217)
+     22  Hỏi Hà                                                                       android.widget.Button                (1001,2292)
+     23  Home                                                                         android.widget.Button                (152,2544)
+         Tab 1 of 4
+     24  AI Decide                                                                    android.widget.Button                (457,2544)
+         Tab 2 of 4
+     25  Tools                                                                        android.widget.Button                (762,2544)
+         Tab 3 of 4
+     26  Profile                                                                      android.widget.Button                (1067,2544)
+         Tab 4 of 4

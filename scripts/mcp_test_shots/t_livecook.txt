@@ -1,0 +1,9 @@
+  Label  Name                                                                    ResourceId    Class                       Coordinates
+      0  Trứng chiên cà chua Bước 1 / 3 Đập trứng Đập 4 trứng vào tô, đánh tan.                android.widget.FrameLayout  (610,1356)
+      1  Trứng chiên cà chua                                                                   android.view.View           (610,166)
+      2  Bước 1 / 3                                                                            android.view.View           (610,241)
+      3  Đập trứng                                                                             android.view.View           (413,412)
+      4  Đập 4 trứng vào tô, đánh tan.                                                         android.view.View           (610,535)
+      5  Quay lại                                                                              android.view.View           (265,2496)
+      6  Dừng                                                                                  android.view.View           (652,2496)
+      7  Tiếp                                                                                  android.view.View           (997,2496)

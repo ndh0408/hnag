@@ -1,0 +1,16 @@
+  Label  Name                                                               ResourceId    Class                       Coordinates
+      0  Anh em bóng đá 5 thành viên · 1 đã vote Live Thêm món Quay random                android.widget.FrameLayout  (610,1356)
+      1  Back                                                                             android.widget.Button       (84,172)
+      2  Anh em bóng đá                                                                   android.view.View           (477,172)
+      3  5 thành viên · 1 đã vote                                                         android.view.View           (401,328)
+      4  Live                                                                             android.view.View           (1130,328)
+      5  ..                                                                               android.view.View           (610,634)
+         Lẩu Thái Hồng Hà
+         Hồng Hà Q1
+         90k · 1.2km
+         M
+         1 vote
+      6  ..                                                                               android.view.View           (610,1006)
+         Bún chả Hương Liên
+         55k · 0.8km
+         0 votes

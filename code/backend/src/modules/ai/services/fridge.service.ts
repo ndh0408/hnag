@@ -59,6 +59,9 @@ export class FridgeService {
       take: 200,
     });
 
+    // Match on whole ingredient phrase OR any of its words, so "cà chua bi"
+    // still matches a food that lists "cà chua".
+    const tokens = (s: string) => s.split(/\s+/).filter((w) => w.length >= 2);
     const scored = all
       .map((f) => {
         const haystack = [
@@ -66,36 +69,28 @@ export class FridgeService {
           JSON.stringify(f.ingredients ?? {}), JSON.stringify(f.recipe ?? {}),
           (f.flavor_tags ?? []).join(' '), (f.diet_tags ?? []).join(' '),
         ].join(' ').toLowerCase();
-        const matched = ings.filter((i) => haystack.includes(i));
-        return { food: f, hits: matched.length, matched };
+        const phraseHits = ings.filter((i) => haystack.includes(i));
+        const tokenHits = ings.filter(
+          (i) => !phraseHits.includes(i) && tokens(i).some((w) => haystack.includes(w)),
+        );
+        const matched = [...phraseHits, ...tokenHits];
+        return { food: f, matched, hits: matched.length, phrase: phraseHits.length };
       })
-      .filter((s) => s.hits > 0)
+      // Meaningful overlap only: at least one exact ingredient, or >=2 token hits.
+      // Otherwise we'd present an unrelated dish as "cookable" (the old bug).
+      .filter((s) => s.phrase >= 1 || s.hits >= 2)
       .sort((a, b) => (b.hits - a.hits) || ((a.food.cook_time_min ?? 60) - (b.food.cook_time_min ?? 60)))
       .slice(0, 5);
 
-    if (scored.length > 0) {
-      return {
-        ingredients: ings,
-        recipes: scored.map((s) => ({
-          food: s.food,
-          uses: s.matched,
-          missing: ings.filter((i) => !s.matched.includes(i)),
-          tip: `Tận dụng ${s.hits}/${ings.length} nguyên liệu bạn có. Khoảng ${s.food.cook_time_min ?? 30} phút.`,
-        })),
-      };
-    }
-
-    const easy = all
-      .filter((f) => (f.cook_time_min ?? 60) <= 25)
-      .sort((a, b) => (a.cook_time_min ?? 60) - (b.cook_time_min ?? 60))
-      .slice(0, 3);
+    // Honest result: if nothing genuinely matches, return an empty list so the
+    // app can say "no dish found" instead of suggesting irrelevant food.
     return {
       ingredients: ings,
-      recipes: easy.map((f) => ({
-        food: f,
-        uses: ings,
-        missing: ['cần thêm vài nguyên liệu phụ'],
-        tip: `Món dễ làm khoảng ${f.cook_time_min ?? 30} phút`,
+      recipes: scored.map((s) => ({
+        food: s.food,
+        uses: s.matched,
+        missing: ings.filter((i) => !s.matched.includes(i)),
+        tip: `Tận dụng ${s.hits}/${ings.length} nguyên liệu bạn có. Khoảng ${s.food.cook_time_min ?? 30} phút.`,
       })),
     };
   }

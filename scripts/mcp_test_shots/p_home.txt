@@ -1,0 +1,64 @@
+  Label  Name                                               ResourceId    Class                                Coordinates
+      0  Chiều mát, làm tô nha .. .. HCM, Q1 · 28° mưa nhẹ                android.widget.FrameLayout           (610,1356)
+      1  .. Trending Near You Xem tất cả  ›                               android.widget.ScrollView            (610,1212)
+      2  Tin của bạn Mai Khoa Linh Tú                                     android.widget.HorizontalScrollView  (610,472)
+      3  Tin của bạn                                                      android.widget.ImageView             (145,472)
+      4  Mai                                                              android.widget.ImageView             (381,472)
+      5  Khoa                                                             android.widget.ImageView             (615,472)
+      6  Linh                                                             android.widget.ImageView             (849,472)
+      7  Tú                                                               android.widget.ImageView             (1083,472)
+      8  .. Trending                                                      android.widget.ImageView             (610,1354)
+         Nem lụi
+         4.8  (1.6k)
+         60k ₫
+         ~800m
+         460 cal
+         Đang mở
+         Vừa
+         ✨
+         "Món vui vẻ cho buổi gặp gỡ" — Hà
+      9  Nấu                                                              android.view.View                    (210,1937)
+     10  Đặt giao · 12 phút                                               android.view.View                    (575,1937)
+     11  Đi ăn                                                            android.view.View                    (975,1937)
+     12  .. Trending Near You                                             android.view.View                    (406,2220)
+     13  Xem tất cả  ›                                                    android.view.View                    (1045,2221)
+     14  Bánh bèo                                                         android.widget.HorizontalScrollView  (610,2362)
+         40k ₫
+         ·
+         ~800m
+         4.7 Cà phê sữa đá
+         25k ₫
+         ·
+         ~800m
+         4.1 Cơm tấm sườn
+         55k ₫
+         ·
+         ~800m
+         4.7
+     15  Bánh bèo                                                         android.widget.ImageView             (300,2362)
+         40k ₫
+         ·
+         ~800m
+         4.7
+     16  Cà phê sữa đá                                                    android.widget.ImageView             (840,2362)
+         25k ₫
+         ·
+         ~800m
+         4.1
+     17  Cơm tấm sườn                                                     android.widget.ImageView             (1174,2362)
+         55k ₫
+         ·
+         ~800m
+         4.7
+     18  Chiều mát, làm tô nha ..                                         android.view.View                    (467,157)
+     19  ..                                                               android.view.View                    (102,184)
+     20  HCM, Q1 · 28° mưa nhẹ                                            android.view.View                    (406,217)
+     21  Hỏi Hà                                                           android.widget.Button                (1001,2292)
+     22  Home                                                             android.widget.Button                (152,2544)
+         Tab 1 of 4
+     23  AI Decide                                                        android.widget.Button                (457,2544)
+         Tab 2 of 4
+     24  Tools                                                            android.widget.Button                (762,2544)
+         Tab 3 of 4
+     25  Profile                                                          android.widget.Button                (1067,2544)
+         Tab 4 of 4

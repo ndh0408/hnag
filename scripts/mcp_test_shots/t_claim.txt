@@ -1,0 +1,11 @@
+  Label  Name                                                                                                                                           ResourceId    Class                       Coordinates
+      0  Xác nhận quán Là chủ / quản lý quán này? Phở Lý Quốc Sư Cập nhật menu real-time Nhận đặt giao trực tiếp Phản hồi review Quảng cáo & analytics                android.widget.FrameLayout  (610,1356)
+      1  Xác nhận quán                                                                                                                                                android.view.View           (454,172)
+      2  Là chủ / quản lý quán này?                                                                                                                                   android.view.View           (610,1005)
+      3  Phở Lý Quốc Sư                                                                                                                                               android.view.View           (610,1110)
+      4  Cập nhật menu real-time                                                                                                                                      android.view.View           (652,1266)
+      5  Nhận đặt giao trực tiếp                                                                                                                                      android.view.View           (652,1368)
+      6  Phản hồi review                                                                                                                                              android.view.View           (652,1470)
+      7  Quảng cáo & analytics                                                                                                                                        android.view.View           (652,1572)
+      8  Bắt đầu xác nhận                                                                                                                                             android.widget.Button       (610,1797)
+      9  Tôi không phải chủ                                                                                                                                           android.widget.Button       (610,1971)

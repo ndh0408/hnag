@@ -1,0 +1,4 @@
+  Label  Name                  ResourceId    Class                       Coordinates
+      0  Quay vòng quyết định                android.widget.FrameLayout  (610,1356)
+      1  Quay vòng quyết định                android.view.View           (567,172)
+      2  QUAY!                               android.widget.Button       (480,2460)

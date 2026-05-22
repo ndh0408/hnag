@@ -1,0 +1,40 @@
+  Label  Name                                  ResourceId    Class                       Coordinates
+      0  Home                                                android.widget.FrameLayout  (610,1356)
+         Tab 1 of 4 AI Decide
+         Tab 2 of 4 Tools
+         Tab 3 of 4 Profile
+         Tab 4 of 4
+      1  Công cụ                                             android.widget.ScrollView   (610,1256)
+      2  Công cụ                                             android.view.View           (610,196)
+      3  ..                                                  android.widget.Button       (610,454)
+         Trợ lý Hà (voice)
+         Hỏi bằng giọng tự nhiên
+      4  ..                                                  android.widget.Button       (610,754)
+         Quét tủ lạnh
+         AI nhận diện nguyên liệu → công thức
+      5  ..                                                  android.widget.Button       (610,1054)
+         Chọn mood
+         AI gợi món theo cảm xúc
+      6  ..                                                  android.widget.Button       (610,1354)
+         Quay random
+         Không quyết được? Quay!
+      7  ..                                                  android.widget.Button       (610,1654)
+         Vote nhóm
+         Quyết định cùng bạn bè
+      8  ..                                                  android.widget.Button       (610,1954)
+         Live cooking
+         Nấu cùng Hà hands-free
+      9  ..                                                  android.widget.Button       (610,2254)
+         Meal plan tuần
+         Lịch ăn cho cả tuần
+     10  ..                                                  android.widget.Button       (610,2414)
+         Xác nhận quán
+         Là chủ quán? Claim ngay
+     11  Home                                                android.widget.Button       (152,2544)
+         Tab 1 of 4
+     12  AI Decide                                           android.widget.Button       (457,2544)
+         Tab 2 of 4
+     13  Tools                                               android.widget.Button       (762,2544)
+         Tab 3 of 4
+     14  Profile                                             android.widget.Button       (1067,2544)
+         Tab 4 of 4
