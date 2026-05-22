@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/food_card.dart';
 import 'auth_service.dart';
@@ -47,9 +48,14 @@ class HnagApi {
   }
 
   Future<Map<String, dynamic>?> foodDetail(String id) async {
-    final r = await http.get(Uri.parse('$baseUrl/v1/foods/$id'));
-    if (r.statusCode != 200) return null;
-    return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+    try {
+      final r = await http.get(Uri.parse('$baseUrl/v1/foods/$id')).timeout(const Duration(seconds: 12));
+      if (r.statusCode != 200) return null;
+      return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+    } catch (e) {
+      debugPrint('HNAG_API foodDetail error: $e');
+      return null;
+    }
   }
 
   /// Smart context-aware AI suggestion (no auth needed).
@@ -245,16 +251,16 @@ class HnagApi {
 
   Future<List<Map<String, dynamic>>> _fetchList(Uri uri) async {
     try {
-      print('HNAG_API GET $uri');
+      debugPrint('HNAG_API GET $uri');
       final r = await http.get(uri).timeout(const Duration(seconds: 20));
-      print('HNAG_API ${r.statusCode} ${r.body.length} bytes');
+      debugPrint('HNAG_API ${r.statusCode} ${r.body.length} bytes');
       if (r.statusCode != 200) return [];
       final body = jsonDecode(r.body) as Map<String, dynamic>;
       final data = body['data'];
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
     } catch (e) {
-      print('HNAG_API error: $e');
+      debugPrint('HNAG_API error: $e');
       return [];
     }
   }

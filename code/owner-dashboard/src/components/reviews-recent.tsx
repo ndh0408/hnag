@@ -1,6 +1,7 @@
 'use client';
 import { Star } from 'lucide-react';
 
+// TODO: wire to backend (GET /v1/owner/reviews via backendFetch). Mock data for now.
 const reviews = [
   { id: '1', user: 'Mai L.',  avatar: 'M', rating: 5, content: 'Ngon xuất sắc! Nước dùng đậm đà, sẽ quay lại.' },
   { id: '2', user: 'Khoa Đ.', avatar: 'K', rating: 3, content: 'Hơi mặn nhưng overall ổn.' },

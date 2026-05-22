@@ -26,14 +26,14 @@ export class ClaimController {
     return this.claim.myClaims(u.sub);
   }
 
-  @Post('claims/:claimId/verify/phone/send')
-  sendPhone(@Param('claimId') id: string, @CurrentUser() u: JwtPayload) {
-    return this.claim.sendPhoneOtp(id, u.sub);
+  @Post('claims/:claimId/verify/email/send')
+  sendEmail(@Param('claimId') id: string, @CurrentUser() u: JwtPayload) {
+    return this.claim.sendEmailOtp(id, u.sub);
   }
 
-  @Post('claims/:claimId/verify/phone')
-  verifyPhone(@Param('claimId') id: string, @CurrentUser() u: JwtPayload, @Body() body: { otp: string }) {
-    return this.claim.verifyPhone(id, u.sub, body.otp);
+  @Post('claims/:claimId/verify/email')
+  verifyEmail(@Param('claimId') id: string, @CurrentUser() u: JwtPayload, @Body() body: { otp: string }) {
+    return this.claim.verifyEmail(id, u.sub, body.otp);
   }
 
   @Post('claims/:claimId/verify/license')

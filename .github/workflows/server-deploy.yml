@@ -71,6 +71,11 @@ jobs:
           ssh ServerLinux "
             set -e
             cd /opt/hnag
+            # Good: --password-stdin keeps the token off the docker CLI argv / ps output.
+            # Caveat: the token is still interpolated into this SSH command string by
+            # Actions. Prefer passing it through an env var on the SSH session (e.g.
+            # ssh ... GHCR_TOKEN=*** and read it from \$GHCR_TOKEN) so it never lands
+            # in the remote shell's history/process list verbatim.
             echo '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
             export GHCR_OWNER='${{ github.repository_owner }}'
             export HNAG_VERSION='$VERSION'

@@ -64,11 +64,21 @@ export class GroupsService {
     const poll = await this.prisma.group_polls.findUnique({ where: { id: pollId } });
     if (!poll || poll.group_id !== groupId) throw new NotFoundException();
     if (poll.status !== 'open') throw new BadRequestException('Vote đã đóng');
+    if (poll.closes_at && poll.closes_at < new Date()) throw new BadRequestException('Vote đã hết hạn');
     const opts = poll.options as any[];
     if (optionIdx < 0 || optionIdx >= opts.length) throw new BadRequestException('Option không hợp lệ');
-    const votes = (poll.votes as Record<string, number[]>) ?? {};
-    votes[userId] = [optionIdx];
-    await this.prisma.group_polls.update({ where: { id: pollId }, data: { votes: votes as any } });
+
+    // Atomic, race-free write: a single UPDATE sets only THIS user's key via
+    // jsonb_set, so concurrent voters can't clobber each other (no read-modify-write).
+    const updated: any[] = await this.prisma.$queryRawUnsafe(
+      `UPDATE group_polls
+         SET votes = jsonb_set(coalesce(votes, '{}'::jsonb), ARRAY[$1], $2::jsonb, true)
+       WHERE id = $3::uuid AND status = 'open'
+       RETURNING votes`,
+      userId, JSON.stringify([optionIdx]), pollId,
+    );
+    if (!updated.length) throw new BadRequestException('Vote đã đóng');
+    const votes = (updated[0].votes as Record<string, number[]>) ?? {};
     const tally = this.tally(votes, opts.length);
     this.gw.broadcastGroup(groupId, 'group.poll.updated', { pollId, tally });
     return { tally };

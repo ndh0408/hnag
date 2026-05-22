@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 
-/// Phone OTP login. Two states: enter phone → enter OTP.
+/// Email OTP login. Two states: enter email → enter OTP.
 class LoginScreen extends StatefulWidget {
-  final Future<void> Function(String phone) onSendOtp;
-  final Future<bool> Function(String phone, String otp) onVerifyOtp;
+  final Future<void> Function(String email) onSendOtp;
+  final Future<bool> Function(String email, String otp) onVerifyOtp;
   final VoidCallback? onGoogle;
   final VoidCallback? onApple;
   const LoginScreen({super.key, required this.onSendOtp, required this.onVerifyOtp, this.onGoogle, this.onApple});
@@ -81,11 +81,11 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: AppSpacing.x4),
               Center(child: Text('Chào mừng đến HNAG', style: AppTypography.displayLg, textAlign: TextAlign.center)),
               const SizedBox(height: AppSpacing.x2),
-              Center(child: Text(_otpSent ? 'Nhập mã 6 số gửi tới\n$_email' : 'Đăng nhập bằng email',
+              Center(child: Text(_otpSent ? 'Mã đăng nhập đã gửi tới email\n$_email' : 'Nhập email của bạn',
                   textAlign: TextAlign.center,
                   style: AppTypography.bodyMd.copyWith(color: Colors.grey.shade600))),
               const SizedBox(height: AppSpacing.x5),
-              if (!_otpSent) _phoneInput() else _otpInput(),
+              if (!_otpSent) _emailInput() else _otpInput(),
               if (_error != null) Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Text(_error!, style: const TextStyle(color: AppColors.danger), textAlign: TextAlign.center),
@@ -124,7 +124,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _phoneInput() {
+  Widget _emailInput() {
     return TextField(
       keyboardType: TextInputType.emailAddress,
       autocorrect: false,
@@ -159,6 +159,8 @@ class _LoginScreenState extends State<LoginScreen> {
       style: AppTypography.displayLg.copyWith(letterSpacing: 12, fontWeight: FontWeight.w800),
       decoration: InputDecoration(
         counterText: '',
+        labelText: 'Mã xác thực (6 số)',
+        floatingLabelAlignment: FloatingLabelAlignment.center,
         hintText: '------',
         hintStyle: AppTypography.displayLg.copyWith(letterSpacing: 12, color: Colors.grey.shade300),
         filled: true,
@@ -170,16 +172,4 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _socialButton(String label, IconData icon, VoidCallback? onTap) {
-    return OutlinedButton.icon(
-      style: OutlinedButton.styleFrom(
-        minimumSize: const Size.fromHeight(52),
-        side: BorderSide(color: Colors.grey.shade300),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.full)),
-      ),
-      onPressed: onTap,
-      icon: Icon(icon, size: 24),
-      label: Text(label, style: AppTypography.bodyLg),
-    );
-  }
 }

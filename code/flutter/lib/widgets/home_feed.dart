@@ -99,7 +99,7 @@ class _ContextHeader extends StatelessWidget implements PreferredSizeWidget {
                 ),
                 IconButton(
                   onPressed: () {},
-                  icon: const Icon(Icons.search_rounded, color: Color(0xFF555)),
+                  icon: const Icon(Icons.search_rounded, color: Color(0xFF555555)),
                   visualDensity: VisualDensity.compact,
                 ),
                 IconButton(

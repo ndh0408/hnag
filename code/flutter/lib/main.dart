@@ -88,13 +88,7 @@ class _BootState extends State<_Boot> {
   }
 
   Future<bool> _doLogin(String email) async {
-    final dev = await AuthService.instance.sendEmailOtp(email);
-    if (!mounted) return false;
-    if (dev != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Mã test: $dev (chưa bật email thật)'), duration: const Duration(seconds: 12)),
-      );
-    }
+    await AuthService.instance.sendEmailOtp(email);
     return true;
   }
 
@@ -223,8 +217,16 @@ class _HomeTabState extends State<_HomeTab> {
       debugPrint('HNAG_API trending=${trending.length} list=${more.length}');
       final all = [...trending, ...more];
       final seen = <String>{};
-      final unique = all.where((f) => seen.add(f['id'] as String)).toList();
-      final parsed = unique.map((j) => FoodCardFromApi.fromApiJson(j)).toList();
+      final parsed = <FoodCard>[];
+      for (final j in all) {
+        final id = j['id'];
+        if (id is! String || !seen.add(id)) continue; // skip null/dup ids
+        try {
+          parsed.add(FoodCardFromApi.fromApiJson(j));
+        } catch (e) {
+          debugPrint('HNAG_API skip item $id: $e'); // one bad item must not nuke the whole feed
+        }
+      }
       debugPrint('HNAG_API parsed ${parsed.length} cards');
       setState(() {
         _cards = parsed.isNotEmpty ? parsed : FoodCard.demos();
@@ -322,8 +324,17 @@ class _AiDecideTabState extends State<_AiDecideTab> {
   Future<void> _load() async {
     // Use AI suggest endpoint (context-aware: time-of-day based filtering)
     final foods = await _api.aiSuggest(limit: 8);
+    if (!mounted) return;
+    final parsed = <FoodCard>[];
+    for (final j in foods.take(8)) {
+      try {
+        parsed.add(FoodCardFromApi.fromApiJson(j));
+      } catch (e) {
+        debugPrint('HNAG_API skip ai-suggest item: $e'); // one bad item must not blank the tab
+      }
+    }
     setState(() {
-      _cards = foods.take(8).map((j) => FoodCardFromApi.fromApiJson(j)).toList();
+      _cards = parsed;
     });
   }
 

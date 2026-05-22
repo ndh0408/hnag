@@ -15,14 +15,14 @@ export function LiveControl() {
 
   async function update(id: string) {
     setCurrent(id);
-    // call PATCH /owner/restaurants/:id/live
+    // TODO: wire to backend (PATCH /v1/owner/restaurants/:id/live). Local-only for now.
   }
 
   return (
     <div className="bg-white rounded-lg border p-5">
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-semibold">Trạng thái live</h2>
-        <span className="text-xs text-muted-foreground">Real-time tới khách</span>
+        <span className="text-xs text-muted-foreground">Demo · chưa kết nối</span>
       </div>
       <div className="grid grid-cols-4 gap-2">
         {states.map(s => (

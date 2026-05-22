@@ -61,33 +61,18 @@ class AuthService {
     _userController.add(_user);
   }
 
-  Future<String?> sendOtp(String phone) async {
-    final r = await http.post(
-      Uri.parse('$_baseUrl/v1/auth/otp/send'),
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({'phone': phone}),
-    ).timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) {
-      throw _httpError(r);
-    }
-    final body = jsonDecode(r.body) as Map<String, dynamic>;
-    final data = body['data'] as Map<String, dynamic>? ?? {};
-    return data['devCode'] as String?;
-  }
-
-  /// Send OTP to an email. Returns devCode when backend is in dev mode (no SMTP).
-  Future<String?> sendEmailOtp(String email) async {
+  /// Send a 6-digit login code to [email]. Throws on failure.
+  Future<void> sendEmailOtp(String email) async {
     final r = await http.post(
       Uri.parse('$_baseUrl/v1/auth/email-otp/send'),
       headers: const {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email.trim()}),
     ).timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) throw _httpError(r);
-    final body = jsonDecode(r.body) as Map<String, dynamic>;
-    final data = body['data'] as Map<String, dynamic>? ?? {};
-    return data['devCode'] as String?;
   }
 
+  /// Verify the emailed code and persist the returned tokens.
+  /// Returns false when the code is wrong/expired (401).
   Future<bool> verifyEmailOtp(String email, String code) async {
     final r = await http.post(
       Uri.parse('$_baseUrl/v1/auth/email-otp/verify'),
@@ -95,10 +80,7 @@ class AuthService {
       body: jsonEncode({
         'email': email.trim(),
         'code': code,
-        'device': {
-          'deviceId': _deviceId,
-          'platform': defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android',
-        },
+        'device': _deviceInfo(),
       }),
     ).timeout(const Duration(seconds: 12));
     if (r.statusCode != 200) {
@@ -115,32 +97,15 @@ class AuthService {
     return true;
   }
 
-  Future<bool> verifyOtp(String phone, String code) async {
-    final r = await http.post(
-      Uri.parse('$_baseUrl/v1/auth/otp/verify'),
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'phone': phone,
-        'code': code,
-        'device': {
-          'deviceId': _deviceId,
-          'platform': defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android',
-        },
-      }),
-    ).timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) {
-      if (r.statusCode == 401) return false;
-      throw _httpError(r);
-    }
-    final body = jsonDecode(r.body) as Map<String, dynamic>;
-    final data = body['data'] as Map<String, dynamic>;
-    await _persistTokens(
-      access: data['accessToken'] as String,
-      refresh: data['refreshToken'] as String,
-      user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
-    );
-    return true;
-  }
+  Map<String, dynamic> _deviceInfo() => {
+        'deviceId': _deviceId,
+        'platform': kIsWeb
+            ? 'web'
+            : (defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android'),
+        'appVersion': '1.0.0',
+        'osVersion': '',
+        'locale': 'vi-VN',
+      };
 
   Future<bool> _validateOrRefresh() async {
     if (_refreshToken == null) return _accessToken != null;

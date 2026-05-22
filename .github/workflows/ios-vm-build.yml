@@ -66,7 +66,9 @@ jobs:
           CHANGELOG: ${{ github.event.inputs.changelog || format('Auto build {0}', github.sha) }}
         run: |
           ssh vm "bash -lc '
-            set -euxo pipefail
+            # NOTE: no -x here — xtrace would echo the exported Apple/ASC
+            # secrets below into the public CI logs.
+            set -euo pipefail
             cd ~/hnag-ci/code/flutter
             export FASTLANE_DISABLE_COLORS=1
             export ASC_KEY_ID=${{ secrets.ASC_KEY_ID }}

@@ -1,0 +1,40 @@
+# ---- Python caches & artifacts ----
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv
+.pytest_cache
+.mypy_cache
+
+# ---- Generated scrape output (not part of the image) ----
+out
+
+# ---- Secrets & credentials (never bake into an image) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.keystore
+
+# ---- VCS & local tooling ----
+.git
+.gitignore
+.dockerignore
+Dockerfile
+.vscode
+.idea
+
+# ---- Node cruft (in case any tooling pulls it in) ----
+node_modules
+
+# ---- Build/dist & logs ----
+dist
+build
+coverage
+*.log
+npm-debug.log
+.DS_Store

@@ -1,3 +1,5 @@
+// TODO: wire to backend (GET /v1/owner/orders/live via backendFetch). Mock data
+// for now — the "Real-time" badge below is aspirational until this is connected.
 const orders = [
   { id: '1', time: '13:42', items: '3× Phở bò tái', total: 165000, partner: 'GrabFood', status: 'preparing' },
   { id: '2', time: '13:38', items: '1× Phở gà',      total: 50000,  partner: 'Pickup',   status: 'confirmed' },
@@ -9,9 +11,9 @@ export function OrdersLive() {
     <div className="bg-white rounded-lg border p-5">
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-semibold">Đơn hàng live</h2>
-        <div className="flex items-center gap-1 text-xs">
-          <span className="w-2 h-2 bg-success rounded-full animate-pulse" />
-          Real-time
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <span className="w-2 h-2 bg-muted-foreground/40 rounded-full" />
+          Demo
         </div>
       </div>
       <div className="space-y-3">
