@@ -5,20 +5,22 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
-import { SmsService } from './sms.service';
 import { EmailService } from './email.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { getJwtSecret } from '../../common/config/secrets';
 
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
-      secret: process.env.JWT_SECRET ?? 'dev-secret',
+      // Fail-fast on a missing/weak secret in production (see secrets.ts).
+      secret: getJwtSecret(),
       signOptions: { expiresIn: '15m', issuer: 'tothanhthuy.cloud' },
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, OtpService, SmsService, EmailService, JwtStrategy],
+  // Email-only auth: SmsService removed (phone OTP is no longer supported).
+  providers: [AuthService, OtpService, EmailService, JwtStrategy],
   exports: [AuthService, OtpService, JwtModule],
 })
 export class AuthModule {}

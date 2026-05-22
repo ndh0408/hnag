@@ -72,8 +72,10 @@ services:
       retries: 5
       start_period: 40s
     networks: [hnag-internal]
-    labels:
-      com.centurylinklabs.watchtower.enable: "true"
+    # NOTE: Watchtower auto-update is intentionally disabled for this service.
+    # Auto-pulling :latest into prod is a supply-chain + availability risk
+    # (an upstream/registry compromise or a bad build would deploy itself
+    # unattended). Deploys are gated through CI → deploy.sh with a pinned tag.
     deploy:
       resources:
         limits: { cpus: '2', memory: 1.5G }

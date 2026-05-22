@@ -123,9 +123,13 @@ export class AiPublicController {
   /** From a list of ingredients → return foods that can be made. */
   @Post('fridge-recipes')
   async fridgeRecipes(@Body() body: { ingredients: string[]; timeMin?: number }) {
-    const ings = (body.ingredients ?? []).map((s) => s.toLowerCase().trim()).filter(Boolean);
+    // Bound the (unauthenticated) input to avoid CPU/DB amplification.
+    const ings = (Array.isArray(body.ingredients) ? body.ingredients : [])
+      .slice(0, 30)
+      .map((s) => String(s).toLowerCase().trim().slice(0, 40))
+      .filter(Boolean);
     if (ings.length === 0) return { recipes: [] };
-    const maxTime = body.timeMin ?? 60;
+    const maxTime = Math.min(Math.max(Number(body.timeMin) || 60, 1), 240);
 
     // Match foods by name/description containing any user ingredient.
     const all = await this.prisma.foods.findMany({

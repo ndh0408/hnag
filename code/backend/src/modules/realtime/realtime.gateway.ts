@@ -1,10 +1,17 @@
-import { Logger, UseGuards } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../../common/prisma/prisma.service';
+
+const wsCorsOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
 
 @WebSocketGateway({
-  cors: { origin: '*' },
+  // Explicit allowlist, not '*'.
+  cors: { origin: wsCorsOrigins.length ? wsCorsOrigins : false, credentials: true },
   transports: ['websocket'],
   pingInterval: 25_000,
 })
@@ -12,7 +19,10 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   @WebSocketServer() server!: Server;
   private readonly logger = new Logger(RealtimeGateway.name);
 
-  constructor(private readonly jwt: JwtService) {}
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async handleConnection(client: Socket) {
     try {
@@ -33,13 +43,23 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   @SubscribeMessage('subscribe:group')
-  joinGroup(@ConnectedSocket() client: Socket, @MessageBody() body: { groupId: string }) {
+  async joinGroup(@ConnectedSocket() client: Socket, @MessageBody() body: { groupId: string }) {
+    const userId = client.data.userId as string | undefined;
+    if (!userId || !body?.groupId) return { ok: false, error: 'unauthorized' };
+    // Only members may join a group room (was: anyone could subscribe and read
+    // every group's live votes/events).
+    const member = await this.prisma.group_members.findUnique({
+      where: { group_id_user_id: { group_id: body.groupId, user_id: userId } },
+    });
+    if (!member) return { ok: false, error: 'not_a_member' };
     client.join(`group:${body.groupId}`);
     return { ok: true };
   }
 
   @SubscribeMessage('subscribe:restaurant')
   joinRestaurant(@ConnectedSocket() client: Socket, @MessageBody() body: { restaurantId: string }) {
+    // Restaurant live data (crowding/wait) is public, but require an authed socket.
+    if (!client.data.userId || !body?.restaurantId) return { ok: false, error: 'unauthorized' };
     client.join(`restaurant:${body.restaurantId}`);
     return { ok: true };
   }

@@ -1,7 +1,8 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
+import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -46,13 +47,16 @@ import { MealModule } from './modules/meal/meal.module';
       }),
     }),
 
-    // GraphQL (admin dashboard endpoint)
+    // GraphQL (admin dashboard endpoint). Protected by GqlAdminGuard on every
+    // resolver; introspection + playground disabled in production.
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
       autoSchemaFile: false,
       typePaths: [require('path').join(__dirname, 'admin/admin.graphql')],
       playground: process.env.NODE_ENV !== 'production',
+      introspection: process.env.NODE_ENV !== 'production',
       path: '/graphql',
+      context: ({ req, res }: any) => ({ req, res }),
     }),
 
     // Cron
@@ -82,7 +86,7 @@ import { MealModule } from './modules/meal/meal.module';
     MealModule,
   ],
   providers: [
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: GqlThrottlerGuard },
   ],
 })
 export class AppModule implements NestModule {

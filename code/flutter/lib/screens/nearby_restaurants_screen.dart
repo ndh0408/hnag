@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../theme/app_theme.dart';
 import '../api/hnag_api.dart';
 import '../api/location_service.dart';
+import '../widgets/attribution.dart';
 import 'map_screen.dart';
 
 class NearbyRestaurantsScreen extends StatefulWidget {
@@ -107,6 +108,7 @@ class _NearbyRestaurantsScreenState extends State<NearbyRestaurantsScreen> {
                       itemBuilder: (_, i) => _card(_items[i]),
                     ),
         ),
+        const SafeArea(top: false, child: DataAttribution(dense: true)),
       ]),
     );
   }

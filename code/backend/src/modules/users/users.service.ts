@@ -28,11 +28,24 @@ export class UsersService {
     });
   }
 
+  // Only these columns may be set by a client — prevents mass-assignment of
+  // arbitrary fields (the previous `prefs as any` wrote whatever was sent).
+  private static readonly ALLOWED_PREF_KEYS = new Set([
+    'allergies', 'diet_type', 'cuisines_love', 'cuisines_hate',
+    'spicy_tolerance', 'sweet_tolerance', 'salty_tolerance',
+    'budget_min', 'budget_max', 'cook_skill', 'health_goal',
+    'daily_calorie', 'macros_target', 'notification_pref',
+  ]);
+
   async updatePreferences(userId: string, prefs: Record<string, unknown>) {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(prefs ?? {})) {
+      if (UsersService.ALLOWED_PREF_KEYS.has(k)) clean[k] = v;
+    }
     return this.prisma.user_preferences.upsert({
       where: { user_id: userId },
-      update: prefs as any,
-      create: { user_id: userId, ...(prefs as any) },
+      update: clean as any,
+      create: { user_id: userId, ...(clean as any) },
     });
   }
 

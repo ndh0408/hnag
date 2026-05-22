@@ -18,11 +18,18 @@ export class LlmReasonService {
 
   constructor(@Inject(REDIS) private readonly redis: IORedis) {
     this.client = process.env.OPENAI_API_KEY
-      ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      ? new OpenAI({
+          apiKey: process.env.OPENAI_API_KEY,
+          // Hard deadline + one retry so a slow OpenAI response can't stall the
+          // request budget (falls back to the static lines on timeout).
+          timeout: 8000,
+          maxRetries: 1,
+        })
       : null;
   }
 
-  async batch(cards: Candidate[], ctx: EnrichedContext): Promise<string[]> {
+  async batch(cards: Candidate[], ctx: EnrichedContext, opts?: { allowLlm?: boolean }): Promise<string[]> {
+    const allowLlm = opts?.allowLlm !== false;
     // Cache key per (food_id × context-bucket)
     const bucket = this.bucketize(ctx);
     const keys = cards.map((c) => `ai:reason:${c.foodId}:${bucket}`);
@@ -37,8 +44,8 @@ export class LlmReasonService {
     });
 
     if (missingIdx.length === 0) return reasons;
-    if (!this.client) {
-      // Fallback static lines per cuisine
+    // No client, or the caller's daily LLM budget is exhausted → static fallback.
+    if (!this.client || !allowLlm) {
       for (const i of missingIdx) {
         reasons[i] = this.fallback(cards[i], ctx);
       }

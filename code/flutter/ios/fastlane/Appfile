@@ -1,4 +1,4 @@
-app_identifier("vn.hnag.app")                          # bundle ID
+app_identifier("vn.hnag.hnag")                         # bundle ID (matches Xcode PRODUCT_BUNDLE_IDENTIFIER)
 apple_id(ENV["APPLE_ID"] || "ndh0408@gmail.com")
 itc_team_id(ENV["APPLE_ITC_TEAM_ID"])                  # App Store Connect team
 team_id(ENV["APPLE_TEAM_ID"])                          # Developer Portal team

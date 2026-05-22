@@ -1,27 +1,39 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { IoAdapter } from '@nestjs/platform-socket.io';
 import { RedisIoAdapter } from './common/adapters/redis-io.adapter';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { EnvelopeInterceptor } from './common/interceptors/envelope.interceptor';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { isProd } from './common/config/secrets';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   const logger = new Logger('Bootstrap');
 
-  // Security
+  // Behind Cloudflare Tunnel / proxy — trust the first proxy hop so req.ip and
+  // the rate-limiter see the real client IP (cf-connecting-ip / x-forwarded-for).
+  app.set('trust proxy', 1);
+
+  // Security headers. CSP enabled in production; relaxed in dev only so the
+  // GraphQL playground works locally.
   app.use(
     helmet({
-      contentSecurityPolicy: false, // allow GraphQL playground in dev
+      contentSecurityPolicy: isProd() ? undefined : false,
     }),
   );
+
+  // CORS: explicit allowlist only. Never '*' with credentials.
+  const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: process.env.CORS_ORIGINS?.split(',') ?? '*',
+    origin: corsOrigins.length ? corsOrigins : false,
     credentials: true,
   });
 

@@ -34,21 +34,22 @@ export class ClaimService {
     return claim;
   }
 
-  async sendPhoneOtp(claimId: string, userId: string) {
+  async sendEmailOtp(claimId: string, userId: string) {
     const claim = await this.find(claimId, userId);
-    const phone = claim.contact_phone;
-    if (!phone) throw new BadRequestException('Thiếu số điện thoại');
-    await this.otp.send(phone);
+    const email = claim.contact_email;
+    if (!email) throw new BadRequestException('Thiếu email liên hệ');
+    await this.otp.sendEmail(email, 'claim');
     return { sent: true };
   }
 
-  async verifyPhone(claimId: string, userId: string, code: string) {
+  async verifyEmail(claimId: string, userId: string, code: string) {
     const claim = await this.find(claimId, userId);
-    if (!claim.contact_phone) throw new BadRequestException();
-    const ok = await this.otp.verify(claim.contact_phone, code);
+    if (!claim.contact_email) throw new BadRequestException('Thiếu email liên hệ');
+    const ok = await this.otp.verifyEmail(claim.contact_email, code, 'claim');
     if (!ok) throw new BadRequestException('Mã OTP không đúng');
     await this.prisma.restaurant_claims.update({
       where: { id: claimId },
+      // reuse the contact-verified scoring slot (was phone, now email)
       data: { phone_otp_passed: true },
     });
     return this.tallyAndDecide(claimId);

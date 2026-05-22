@@ -29,6 +29,12 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/src/admin/admin.graphql ./dist/admin/admin.graphql
 COPY prisma ./prisma
 
+# Run as the unprivileged `node` user shipped with the official image.
+# Hand ownership of the app dir to `node` (the COPY layers above ran as root),
+# then drop privileges for the rest of the runtime.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 4000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
   CMD wget -q --spider http://localhost:4000/health || exit 1

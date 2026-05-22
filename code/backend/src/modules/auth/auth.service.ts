@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, createHash } from 'crypto';
 import IORedis from 'ioredis';
@@ -22,50 +22,6 @@ export class AuthService {
     private readonly jwt: JwtService,
     @Inject(REDIS) private readonly redis: IORedis,
   ) {}
-
-  async signInWithPhone(phone: string, device?: DeviceInfo) {
-    const phoneHash = sha256(phone);
-
-    // Upsert user
-    const user = await this.prisma.users.upsert({
-      where: { phone_hash: phoneHash },
-      update: { last_seen_at: new Date() },
-      create: {
-        phone,
-        phone_hash: phoneHash,
-        username: await this.generateUsername(),
-        display_name: maskPhone(phone),
-        language: 'vi',
-      },
-    });
-
-    // Register device
-    if (device) {
-      await this.prisma.user_devices.upsert({
-        where: { device_id: device.deviceId },
-        update: {
-          user_id: user.id,
-          platform: device.platform,
-          app_version: device.appVersion,
-          os_version: device.osVersion,
-          push_token: device.pushToken,
-          locale: device.locale,
-          last_active_at: new Date(),
-        },
-        create: {
-          user_id: user.id,
-          device_id: device.deviceId,
-          platform: device.platform,
-          app_version: device.appVersion,
-          os_version: device.osVersion,
-          push_token: device.pushToken,
-          locale: device.locale,
-        },
-      });
-    }
-
-    return this.issueTokens(user);
-  }
 
   async signInWithEmail(email: string, device?: DeviceInfo) {
     const key = email.toLowerCase().trim();
@@ -103,17 +59,34 @@ export class AuthService {
       where: { refresh_token_hash: tokenHash },
       include: { users: true },
     });
-    if (!session || !session.users || session.revoked_at || (session.expires_at && session.expires_at < new Date())) {
-      throw new Error('Invalid refresh token');
+    if (!session || !session.users) {
+      throw new UnauthorizedException('Invalid refresh token');
     }
+    // Reuse of an already-rotated (revoked) token => likely theft. Revoke the
+    // whole chain for this user as a safety measure.
+    if (session.revoked_at) {
+      await this.prisma.auth_sessions.updateMany({
+        where: { user_id: session.user_id, revoked_at: null },
+        data: { revoked_at: new Date() },
+      });
+      throw new UnauthorizedException('Refresh token reuse detected — please sign in again');
+    }
+    if (session.expires_at && session.expires_at < new Date()) {
+      throw new UnauthorizedException('Refresh token expired');
+    }
+    // Rotate: revoke the consumed session and issue a fresh one.
+    await this.prisma.auth_sessions.update({
+      where: { id: session.id },
+      data: { revoked_at: new Date() },
+    });
     return this.issueTokens(session.users);
   }
 
   // -------- helpers --------
 
-  private async issueTokens(user: { id: string; username: string | null; display_name: string | null; is_premium: boolean }) {
+  private async issueTokens(user: { id: string; username: string | null; email?: string | null; display_name: string | null; is_premium: boolean }) {
     const accessToken = await this.jwt.signAsync(
-      { sub: user.id, username: user.username, isPremium: user.is_premium },
+      { sub: user.id, username: user.username, email: user.email ?? undefined, isPremium: user.is_premium },
       { expiresIn: '15m' },
     );
     const refreshTokenPlain = randomBytes(48).toString('base64url');

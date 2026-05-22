@@ -88,8 +88,11 @@ export class AiOrchestratorService {
     // 5. Diversity + final top-N
     const finalTop = this.ranker.diversify(ranked, req.limit);
 
-    // 6. LLM reason (batched for cost)
-    const reasons = await this.reason.batch(finalTop, enriched);
+    // 6. LLM reason (batched for cost). Bounded by a per-user daily LLM budget so
+    // a scripted account (even premium) can't run up unbounded OpenAI spend; over
+    // budget we still return suggestions using the static fallback lines.
+    const allowLlm = await this.consumeLlmBudget(req.userId, req.isPremium);
+    const reasons = await this.reason.batch(finalTop, enriched, { allowLlm });
 
     // 7. Build cards
     const sessionId = uuid();
@@ -216,6 +219,15 @@ export class AiOrchestratorService {
     if (count === 1) await this.redis.expire(key, 86400);
     const free = 10;
     return { ok: count <= free, remaining: Math.max(0, free - count) };
+  }
+
+  /** Per-user daily cap on real LLM calls (caption generation). Returns whether the LLM may be used. */
+  private async consumeLlmBudget(userId: string, isPremium: boolean): Promise<boolean> {
+    const cap = Number(process.env.LLM_DAILY_CAP ?? (isPremium ? 300 : 30));
+    const key = `ai:llmbudget:${userId}:${today()}`;
+    const count = await this.redis.incr(key);
+    if (count === 1) await this.redis.expire(key, 86400);
+    return count <= cap;
   }
 
   private async bumpDecideStreak(userId: string) {

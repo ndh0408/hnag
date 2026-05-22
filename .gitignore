@@ -66,12 +66,22 @@ ios/Flutter/flutter_export_environment.sh
 ios/Flutter/App.framework/
 ios/Flutter/Flutter.framework/
 ios/Runner.xcworkspace/xcuserdata/
+# Flutter generated artifacts (project lives under code/flutter, so anchor there)
+code/flutter/ios/Flutter/
+code/flutter/ios/Runner/GeneratedPluginRegistrant.h
+code/flutter/ios/Runner/GeneratedPluginRegistrant.m
 android/.gradle/
 android/captures/
 android/local.properties
 android/app/build/
 *.lock
 !pubspec.lock
+
+# ==========================================================================
+# Next.js (owner dashboard) build output
+# ==========================================================================
+.next/
+next-env.d.ts
 
 # ==========================================================================
 # Python (data ingestion / ML)

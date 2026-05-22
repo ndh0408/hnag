@@ -1,10 +1,12 @@
 import { Resolver, Query, Context, Args } from '@nestjs/graphql';
-import { Injectable } from '@nestjs/common';
+import { Injectable, UseGuards } from '@nestjs/common';
 import { AdminAuthService } from './admin-auth.service';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { GqlAdminGuard } from './gql-admin.guard';
 
 @Resolver()
 @Injectable()
+@UseGuards(GqlAdminGuard)
 export class AdminResolver {
   constructor(
     private readonly auth: AdminAuthService,

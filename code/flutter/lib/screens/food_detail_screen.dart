@@ -190,6 +190,13 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
             child: Padding(
               padding: const EdgeInsets.all(AppSpacing.x4),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Icon(Icons.photo_camera_outlined, size: 12, color: Colors.grey.shade500),
+                  const SizedBox(width: 4),
+                  Text('Nguồn ảnh: Wikimedia Commons',
+                      style: AppTypography.caption.copyWith(color: Colors.grey.shade500, fontSize: 11)),
+                ]),
+                const SizedBox(height: 8),
                 Text(food.name, style: AppTypography.displayLg),
                 const SizedBox(height: 8),
                 Row(children: [

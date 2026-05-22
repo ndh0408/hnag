@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import '../theme/app_theme.dart';
+import '../widgets/attribution.dart';
 
 /// Restaurant map — see docs/08-MAP-SOCIAL.md.
 /// Uses Mapbox custom style (cyberpunk dark) with food pins.
@@ -41,7 +42,12 @@ class _FoodMapScreenState extends State<FoodMapScreen> {
         ),
         Positioned(top: 0, left: 0, right: 0, child: SafeArea(child: _filterBar())),
         Positioned(right: 16, bottom: 110, child: _mapControls()),
-        Positioned(left: 0, right: 0, bottom: 0, child: SafeArea(child: _bottomSheet())),
+        Positioned(left: 0, right: 0, bottom: 0, child: SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            _bottomSheet(),
+            const DataAttribution(dense: true),
+          ]),
+        )),
       ]),
     );
   }
