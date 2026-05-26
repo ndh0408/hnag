@@ -1,21 +1,16 @@
 #!/bin/zsh -l
-# HNAG iOS — sign in GUI Terminal context + install onto iPhone Kayn over WiFi.
+# HNAG iOS — build signed Runner.app + install on iPhone Kayn over WiFi.
 #
-# Why this script: the SSH-only path fails at signing because the macOS keychain
-# can't be unlocked from a remote session (see memory hnag-ios-signing-flow).
-# Run this from a Terminal window OPEN ON THE MAC GUI (Screen Sharing/VNC/
-# locally) so the keychain unlock prompt can be answered.
+# Per memory hnag-ios-signing-flow:
+#  - Xcode 16.2 archive validation FAILS for iPhone Kayn (iOS 26.5)
+#    because Xcode 16.2 only knows iOS ≤18.2
+#  - `flutter build ios --release` (just signed Runner.app, NO archive) WORKS,
+#    and `devicectl device install app` can deploy it to iOS 26.5
 #
-# Prerequisites:
-#  - ~/flutter@3.44.0 installed (NOT /opt/flutter)
-#  - iPhone Kayn paired over WiFi + Developer Mode on
-#  - Free Apple Development cert in login.keychain (team FP8Z984262)
-#  - Code synced to ~/hnag-flutter
-#
-# Usage:
-#  zsh build-ios-and-install.sh
-#
-# Status output goes to /tmp/hnag-install.log and stdout.
+# Invoke via:  open -a Terminal ~/build-ios-and-install.sh
+# Running it inside a GUI Terminal is required so the login.keychain is
+# accessible (codesign needs the private key) and CocoaPods runs as the
+# user (it crashes when running as root).
 
 set -e
 LOG=/tmp/hnag-install.log
@@ -35,30 +30,22 @@ flutter pub get
 echo "── 2. pod install"
 ( cd ios && pod install )
 
-echo "── 3. flutter build ipa (development export, real signing)"
-# Make sure the keychain is unlocked. If prompted, just hit "Always Allow".
-flutter build ipa --release --export-method development
+echo "── 3. flutter build ios --release (signed Runner.app, no archive)"
+flutter build ios --release
 
-echo "── 4. locate IPA"
-IPA=$(ls -t build/ios/ipa/*.ipa 2>/dev/null | head -1)
-if [[ -z "$IPA" ]]; then
-  echo "FATAL: no IPA produced. Likely signing failed — check log above."
+APP=~/hnag-flutter/build/ios/iphoneos/Runner.app
+if [[ ! -d "$APP" ]]; then
+  echo "FATAL: $APP not built — check log above for actual error."
   exit 2
 fi
-echo "IPA = $IPA ($(du -h "$IPA" | cut -f1))"
+echo "Runner.app size = $(du -sh "$APP" | cut -f1)"
 
-echo "── 5. discover iPhone Kayn over WiFi"
-DEV=$(xcrun devicectl list devices 2>/dev/null \
-  | awk '/Kayn/ {print $NF}' | head -1)
-if [[ -z "$DEV" ]]; then
-  echo "── (devicectl couldn't list Kayn — try cabled USB or pair via Xcode)"
-  echo "Available devices:"
-  xcrun devicectl list devices 2>&1 | sed 's/^/   /'
-  exit 3
-fi
-echo "iPhone Kayn UDID = $DEV"
+echo "── 4. install onto iPhone Kayn over WiFi"
+UDID=00008130-000E31A40AFA001C
+xcrun devicectl device install app --device "$UDID" "$APP"
 
-echo "── 6. install IPA"
-xcrun devicectl device install app --device "$DEV" "$IPA"
+echo "── 5. launch app on iPhone"
+xcrun devicectl device process launch --device "$UDID" vn.hnag.hnag || true
 
-echo "── DONE $(date). Open HNAG on iPhone Kayn — Tools tab → Hi-Fi Preview"
+echo "── DONE $(date). Mở app HNAG trên iPhone Kayn — bottom-nav default đã là Hi-Fi v2."
+echo "DONE_OK"
