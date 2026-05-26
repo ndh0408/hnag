@@ -16,6 +16,7 @@ import 'widgets/live_cooking.dart';
 
 import 'screens/onboarding/onboarding_flow.dart';
 import 'screens/auth/auth.dart' as auth_v2;
+import 'screens/_hifi_demo.dart';
 import 'screens/mood_selector_screen.dart';
 import 'screens/mood_result_screen.dart';
 import 'screens/fridge_scan_screen.dart';
@@ -620,6 +621,20 @@ class _ToolsTab extends StatelessWidget {
           await HnagApi().startCheckout(planId, 'vietqr');
         })))),
     ];
+    final hiFi = [
+      ('🏠', 'Home v2', 'Hi-Fi feed: greeting + AI hero + trending + friends + TikTok', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.homeDemo(context)))),
+      ('🎯', 'AI Decide v2', '6-mode picker + hunger/time/budget questions', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.aiDecideDemo(context)))),
+      ('🃏', 'Card Stack v2', 'Tinder-style swipe — vuốt L/R/U/D', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.cardStackDemo(context)))),
+      ('🍜', 'Food Detail v2', 'SliverAppBar + ingredients + recipe + sticky CTA', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.foodDetailDemo(context)))),
+      ('🛒', 'Cart v2', 'Qty stepper + voucher + total + checkout', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.cartDemo(context)))),
+      ('📦', 'Order Tracking v2', 'Timeline status + driver card + ETA hero', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.orderTrackingDemo(context)))),
+    ];
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.all(AppSpacing.x4),
@@ -634,6 +649,9 @@ class _ToolsTab extends StatelessWidget {
           const SizedBox(height: AppSpacing.x4),
           _sectionLabel('Cùng bạn bè'),
           ...social.map((t) => _ToolTile(icon: t.$1, title: t.$2, subtitle: t.$3, onTap: t.$4)),
+          const SizedBox(height: AppSpacing.x4),
+          _sectionLabel('🎨 Hi-Fi Preview (dev)'),
+          ...hiFi.map((t) => _ToolTile(icon: t.$1, title: t.$2, subtitle: t.$3, onTap: t.$4)),
         ],
       ),
     );
