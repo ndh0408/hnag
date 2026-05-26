@@ -36,6 +36,7 @@ class Hifi {
   static Widget groupVotingDemo(BuildContext c)  => const _GroupVotingReal();
   static Widget notificationsDemo(BuildContext c)=> const _NotificationsReal();
   static Widget lateNightDemo(BuildContext c)    => const _LateNightReal();
+  static Widget searchDemo(BuildContext c)       => _SearchReal();
   static Widget settingsDemo(BuildContext c)     => settings_v2.SettingsScreenV2(
     userName: 'Bạn',
     userEmail: 'bạn@hnag.app',
@@ -167,6 +168,56 @@ class _MealPlannerRealState extends State<_MealPlannerReal> {
           priceVnd: (f['avg_price_vnd'] as int?) ?? 0,
         );
       },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SEARCH v2 — wired to /v1/foods?q=
+// ─────────────────────────────────────────────────────────────
+class _SearchReal extends StatelessWidget {
+  final _api = HnagApi();
+  _SearchReal();
+
+  @override
+  Widget build(BuildContext context) {
+    return home_v2.SearchScreenV2(
+      onSearch: (q) async {
+        try { return await _api.searchFoods(q); }
+        catch (_) { return <Map<String, dynamic>>[]; }
+      },
+      onResultTap: (food) async {
+        final id = (food['id'] as String?) ?? '';
+        if (id.isEmpty) return;
+        final detail = await _api.foodDetail(id);
+        if (!context.mounted || detail == null) return;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => detail_v2.FoodDetailScreenV2(
+            food: detail_v2.FoodDetailDataV2(
+              id: id,
+              name: (detail['name_vi'] as String?) ?? '',
+              imageUrl: detail['primary_image'] as String?,
+              foodSlug: 'pho',
+              rating: ((detail['rating_avg'] as num?) ?? 4.5).toDouble(),
+              reviewCount: (detail['rating_count'] as int?) ?? 0,
+              flavorTags: ((detail['flavor_tags'] as List?) ?? const []).cast<String>().take(2).toList(),
+              region: (detail['region'] as String?) ?? 'Việt Nam',
+              priceVnd: (detail['avg_price_vnd'] as int?) ?? 0,
+              calories: (detail['avg_calories'] as int?) ?? 0,
+              prepTimeMin: (detail['cook_time_min'] as int?) ?? 30,
+              macroLabel: 'High protein',
+              hashtags: ((detail['mood_tags'] as List?) ?? const []).cast<String>().take(6).toList(),
+              aiReason: (detail['description'] as String?) ?? '',
+              ingredients: const [],
+              steps: const [],
+              totalSteps: 0,
+            ),
+          ),
+        ));
+      },
+      onVoice: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (c) => Hifi.voiceHaDemo(c),
+      )),
     );
   }
 }

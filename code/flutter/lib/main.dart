@@ -5,6 +5,8 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import 'theme/app_theme.dart';
+import 'design/tokens.dart';
+import 'widgets/ds/ds.dart';
 import 'models/food_card.dart';
 import 'api/hnag_api.dart';
 import 'api/auth_service.dart';
@@ -185,48 +187,39 @@ class RootScreen extends StatefulWidget {
 }
 
 class _RootScreenState extends State<RootScreen> {
-  int _index = 0;
+  // 5-tab layout matching design/m-home.jsx <MobileNav>:
+  //   Trang chủ · Khám phá · [center FAB AI Decide] · Feed · Tôi
+  String _active = 'home';
 
   @override
   Widget build(BuildContext context) {
-    // Production: bottom-nav uses Hi-Fi v2 screens fed by real HnagApi data.
-    // v1 widgets (HomeFeed, CardStack, FoodDetailScreen, ProfileScreen) are
-    // still reachable individually for backwards-compat, but the default
-    // user-facing flow IS the new design.
-    final pages = [
-      Hifi.homeDemo(context),       // Home v2 (Hi-Fi)
-      Hifi.aiDecideDemo(context),   // AI Decide v2 (Hi-Fi)
-      const _ToolsTab(),
-      Hifi.profileDemo(context),    // Profile v2 (Hi-Fi)
-    ];
-    return Scaffold(
-      body: pages[_index],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.auto_awesome_rounded), label: 'AI Decide'),
-          NavigationDestination(icon: Icon(Icons.apps_rounded), label: 'Tools'),
-          NavigationDestination(icon: Icon(Icons.person_rounded), label: 'Profile'),
-        ],
-      ),
-      floatingActionButton: _index == 0
-          ? FloatingActionButton.extended(
-              backgroundColor: AppColors.phoOrange,
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.mic_rounded),
-              label: const Text('Hỏi Hà'),
-              onPressed: () => _openVoice(context),
-            )
-          : null,
-    );
-  }
+    // Pages are recreated lazily so each tab refresh fetches latest API data.
+    final body = switch (_active) {
+      'home'    => Hifi.homeDemo(context),
+      'explore' => Hifi.searchDemo(context),
+      'feed'    => Hifi.tiktokFeedDemo(context),
+      'me'      => Hifi.profileDemo(context),
+      _         => Hifi.homeDemo(context),
+    };
 
-  void _openVoice(BuildContext context) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => VoiceAssistantScreen(onTranscript: _voiceIntent),
-    ));
+    return Scaffold(
+      backgroundColor: const Color(0xFFFBFAF7),  // tokens neutral.25
+      body: HnagDesign(
+        tokens: SemanticTokens.light,
+        child: body,
+      ),
+      bottomNavigationBar: HnagDesign(
+        tokens: SemanticTokens.light,
+        child: HnagMobileNav(
+          active: _active,
+          glass: true,
+          onTap: (k) => setState(() => _active = k),
+          onCenterTap: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => Hifi.aiDecideDemo(context),
+          )),
+        ),
+      ),
+    );
   }
 
   Future<HaResponse> _voiceIntent(String transcript) async {
