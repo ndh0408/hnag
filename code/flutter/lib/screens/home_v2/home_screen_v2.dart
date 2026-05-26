@@ -11,10 +11,19 @@ import '../../design/theme.dart';
 import '../../widgets/ds/ds.dart';
 import 'food_card_large.dart';
 
+class StoryItem {
+  final String name;
+  final String? avatarUrl;
+  final String? mediaUrl;
+  final String foodSlug;
+  const StoryItem({required this.name, this.avatarUrl, this.mediaUrl, this.foodSlug = 'pho'});
+}
+
 class HomeScreenV2 extends StatelessWidget {
   final String userName;
   final String? userAvatar;
   final FoodCardLargeData? heroSuggestion;
+  final List<StoryItem> stories;
   final List<NearbyPlace> trending;
   final List<FriendActivity> friends;
   final List<TikTokVideo> tiktoks;
@@ -28,6 +37,7 @@ class HomeScreenV2 extends StatelessWidget {
     required this.userName,
     this.userAvatar,
     this.heroSuggestion,
+    this.stories = const [],
     this.trending = const [],
     this.friends = const [],
     this.tiktoks = const [],
@@ -95,7 +105,7 @@ class HomeScreenV2 extends StatelessWidget {
 
                         // Stories rail
                         const SizedBox(height: 20),
-                        _StoriesRail(),
+                        _StoriesRail(stories: stories),
 
                         // Hero AI suggestion
                         if (heroSuggestion != null) ...[
@@ -244,13 +254,8 @@ class _WeatherStrip extends StatelessWidget {
 // STORIES RAIL
 // ─────────────────────────────────────────────────────────────
 class _StoriesRail extends StatelessWidget {
-  static const _stories = [
-    ('Minh', 'bunch'),
-    ('Linh', 'goicuon'),
-    ('Khoa', 'sushi'),
-    ('Thu', 'lau'),
-    ('Hùng', 'comga'),
-  ];
+  final List<StoryItem> stories;
+  const _StoriesRail({required this.stories});
 
   @override
   Widget build(BuildContext context) {
@@ -267,7 +272,7 @@ class _StoriesRail extends StatelessWidget {
                 width: 60, height: 60,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: t.borderStrong, width: 2, style: BorderStyle.solid),
+                  border: Border.all(color: t.borderStrong, width: 2),
                 ),
                 child: Center(child: HnagIcon('plus', size: 22, color: t.textMuted)),
               ),
@@ -276,8 +281,8 @@ class _StoriesRail extends StatelessWidget {
             ],
           ),
           const SizedBox(width: 12),
-          for (final s in _stories) ...[
-            _Story(name: s.$1, foodSlug: s.$2),
+          for (final s in stories) ...[
+            _Story(item: s),
             const SizedBox(width: 12),
           ],
         ],
@@ -287,9 +292,8 @@ class _StoriesRail extends StatelessWidget {
 }
 
 class _Story extends StatelessWidget {
-  final String name;
-  final String foodSlug;
-  const _Story({required this.name, required this.foodSlug});
+  final StoryItem item;
+  const _Story({required this.item});
 
   @override
   Widget build(BuildContext context) {
@@ -306,16 +310,24 @@ class _Story extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(color: t.bg, shape: BoxShape.circle),
             padding: const EdgeInsets.all(2),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: FoodGradients.bySlug(foodSlug),
-                shape: BoxShape.circle,
-              ),
+            child: ClipOval(
+              child: item.mediaUrl != null && item.mediaUrl!.isNotEmpty
+                  ? HnagPhoto(imageUrl: item.mediaUrl, foodSlug: item.foodSlug, aspectRatio: 1, radius: 999)
+                  : item.avatarUrl != null && item.avatarUrl!.isNotEmpty
+                      ? HnagPhoto(imageUrl: item.avatarUrl, foodSlug: item.foodSlug, aspectRatio: 1, radius: 999)
+                      : DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: FoodGradients.bySlug(item.foodSlug),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
             ),
           ),
         ),
         const SizedBox(height: 6),
-        Text('@$name', style: HnagType.micro.copyWith(color: t.text, fontFamily: HnagFonts.body)),
+        Text('@${item.name}',
+          style: HnagType.micro.copyWith(color: t.text, fontFamily: HnagFonts.body),
+        ),
       ],
     );
   }

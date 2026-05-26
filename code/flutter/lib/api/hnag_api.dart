@@ -204,6 +204,127 @@ class HnagApi {
     return body['data'] as Map<String, dynamic>?;
   }
 
+  // ─── Social: Posts + Feed + Stories ─────────────────────────────────
+  /// Feed posts. tab: 'for_you' | 'following' | 'nearby' | 'trending'
+  Future<List<Map<String, dynamic>>> feedPosts({String tab = 'for_you', int page = 1}) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) =>
+          http.get(Uri.parse('$baseUrl/v1/feed?tab=$tab&page=$page'), headers: h)
+              .timeout(const Duration(seconds: 12)));
+      if (r.statusCode != 200) return [];
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      return ((body['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Friends activity = following-feed (posts from people you follow)
+  Future<List<Map<String, dynamic>>> friendsActivity({int page = 1}) =>
+      feedPosts(tab: 'following', page: page);
+
+  /// Stories from followed users.
+  Future<List<Map<String, dynamic>>> storiesFeed() async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) =>
+          http.get(Uri.parse('$baseUrl/v1/stories/feed'), headers: h)
+              .timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200) return [];
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      return ((body['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<bool> likePost(String postId, {required bool like}) async {
+    final r = await AuthService.instance.authedRequest((h) => like
+        ? http.post(Uri.parse('$baseUrl/v1/posts/$postId/like'), headers: h)
+            .timeout(const Duration(seconds: 8))
+        : http.delete(Uri.parse('$baseUrl/v1/posts/$postId/like'), headers: h)
+            .timeout(const Duration(seconds: 8)));
+    return r.statusCode == 200 || r.statusCode == 201;
+  }
+
+  // ─── Orders ──────────────────────────────────────────────────────────
+  /// Create an order intent — backend returns a partner deep-link
+  /// (Grab/Shopee/BeFood) that the app should `launchUrlString` to.
+  Future<Map<String, dynamic>?> createOrderIntent({
+    required String foodId,
+    String? restaurantId,
+    String? preferredPartner,
+  }) async {
+    final r = await AuthService.instance.authedRequest((h) => http.post(
+          Uri.parse('$baseUrl/v1/orders/intent'),
+          headers: {...h, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'foodId': foodId,
+            if (restaurantId != null) 'restaurantId': restaurantId,
+            if (preferredPartner != null) 'preferredPartner': preferredPartner,
+          }),
+        ).timeout(const Duration(seconds: 15)));
+    if (r.statusCode != 200 && r.statusCode != 201) return null;
+    return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+  }
+
+  Future<List<Map<String, dynamic>>> myOrders({int page = 1}) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) =>
+          http.get(Uri.parse('$baseUrl/v1/orders?page=$page'), headers: h)
+              .timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200) return [];
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      return ((body['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ─── Phone OTP ───────────────────────────────────────────────────────
+  /// Send 6-digit OTP to a Vietnamese phone number (E.164 or 0-prefixed).
+  /// Backend hashes + rate-limits per memory; never returns the code.
+  Future<bool> sendPhoneOtp(String phone) async {
+    try {
+      final r = await http.post(
+        Uri.parse('$baseUrl/v1/auth/phone-otp/send'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'phone': phone}),
+      ).timeout(const Duration(seconds: 12));
+      return r.statusCode == 200;
+    } catch (_) { return false; }
+  }
+
+  Future<Map<String, dynamic>?> verifyPhoneOtp(String phone, String code) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/v1/auth/phone-otp/verify'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'phone': phone, 'code': code}),
+    ).timeout(const Duration(seconds: 12));
+    if (r.statusCode != 200) return null;
+    return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+  }
+
+  // ─── Apple SSO ───────────────────────────────────────────────────────
+  Future<Map<String, dynamic>?> signInWithApple({
+    required String identityToken,
+    String? authorizationCode,
+    String? fullName,
+    String? email,
+  }) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/v1/auth/apple'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'identityToken': identityToken,
+        if (authorizationCode != null) 'authorizationCode': authorizationCode,
+        if (fullName != null) 'fullName': fullName,
+        if (email != null) 'email': email,
+      }),
+    ).timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200 && r.statusCode != 201) return null;
+    return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+  }
+
   Future<Map<String, dynamic>?> startCheckout(String plan, String provider) async {
     final r = await AuthService.instance.authedRequest((h) => http.post(
           Uri.parse('$baseUrl/v1/subscription/checkout'),

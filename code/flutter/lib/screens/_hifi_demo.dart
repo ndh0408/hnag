@@ -4,8 +4,12 @@
 // hardcoded. Each demo widget is a thin StatefulWidget that fetches its own
 // data from production API and adapts it to the v2 screens' data shapes.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
 
 import '../api/hnag_api.dart';
 import '../api/auth_service.dart';
@@ -425,6 +429,7 @@ class _HomeRealState extends State<_HomeReal> {
   List<home_v2.NearbyPlace> _trending = [];
   List<home_v2.FriendActivity> _friends = [];
   List<home_v2.TikTokVideo> _tiktoks = [];
+  List<home_v2.StoryItem> _stories = [];
 
   @override
   void initState() {
@@ -475,15 +480,68 @@ class _HomeRealState extends State<_HomeReal> {
         hot: ((f['trending_score'] as num?) ?? 0) > 50,
       )).toList();
 
-      // 4. TikTok (we don't have a tiktok endpoint yet — use trending as preview)
-      _tiktoks = trending.skip(2).take(2).map((f) => home_v2.TikTokVideo(
-        name: (f['name_vi'] as String?) ?? '',
-        views: '${((f['rating_count'] as int?) ?? 1) * 10}',
-        foodSlug: _slug(f),
-      )).toList();
+      // 4. Stories from followed users (auth required — empty for guests)
+      try {
+        final storyRows = await _api.storiesFeed();
+        _stories = storyRows.take(8).map((row) {
+          final author = (row['users'] is Map ? row['users'] as Map : const {});
+          final name = (author['display_name'] as String?) ?? (author['username'] as String?) ?? 'bạn';
+          return home_v2.StoryItem(
+            name: name,
+            avatarUrl: author['avatar_url'] as String?,
+            mediaUrl: (row['media_poster'] as String?) ?? (row['media_url'] as String?),
+            foodSlug: _slug(row.containsKey('foods') && row['foods'] is Map ? row['foods'] as Map<String, dynamic> : {'name_vi': name}),
+          );
+        }).toList();
+      } catch (_) { _stories = const []; }
 
-      // 5. Friends activity — no backend endpoint yet, leave empty (UI handles it)
-      _friends = const [];
+      // 5. Friends activity via /v1/feed?tab=following (real posts from followees)
+      try {
+        final follow = await _api.friendsActivity();
+        _friends = follow.take(3).map((p) {
+          final u = (p['users'] is Map ? p['users'] as Map : const {});
+          final name = (u['display_name'] as String?) ?? (u['username'] as String?) ?? 'Bạn';
+          final type = (p['type'] as String?) ?? 'photo';
+          final caption = (p['caption'] as String?) ?? '';
+          final relTime = _relativeTime(p['created_at']);
+          return home_v2.FriendActivity(
+            name: name,
+            avatarUrl: u['avatar_url'] as String?,
+            text: type == 'review' ? caption : (type == 'video' ? 'đang nấu món mới' : caption.isEmpty ? 'check-in quán mới' : caption),
+            time: relTime,
+            emoji: type == 'video' ? '🍳' : (type == 'review' ? '⭐' : '🍜'),
+            cooking: type == 'video',
+          );
+        }).toList();
+      } catch (_) { _friends = const []; }
+
+      // 6. TikTok feed via /v1/feed?tab=trending — real social posts (photo/video)
+      try {
+        final posts = await _api.feedPosts(tab: 'trending', page: 1);
+        if (posts.isNotEmpty) {
+          _tiktoks = posts.take(4).map((p) {
+            return home_v2.TikTokVideo(
+              name: (p['caption'] as String?) ?? '',
+              views: _shortCount((p['like_count'] as num?) ?? 0),
+              foodSlug: _slug(p.containsKey('foods') && p['foods'] is Map ? p['foods'] as Map<String, dynamic> : {'name_vi': (p['caption'] as String?) ?? ''}),
+              videoUrl: p['media_url'] as String?,
+            );
+          }).toList();
+        } else {
+          // No social posts yet — fall back to trending foods so the grid isn't empty
+          _tiktoks = trending.skip(2).take(2).map((f) => home_v2.TikTokVideo(
+            name: (f['name_vi'] as String?) ?? '',
+            views: '${((f['rating_count'] as int?) ?? 1) * 10}',
+            foodSlug: _slug(f),
+          )).toList();
+        }
+      } catch (_) {
+        _tiktoks = trending.skip(2).take(2).map((f) => home_v2.TikTokVideo(
+          name: (f['name_vi'] as String?) ?? '',
+          views: '${((f['rating_count'] as int?) ?? 1) * 10}',
+          foodSlug: _slug(f),
+        )).toList();
+      }
     } catch (e) {
       debugPrint('HNAG_API homeDemo error: $e');
     } finally {
@@ -522,6 +580,24 @@ class _HomeRealState extends State<_HomeReal> {
     return '4.5';
   }
 
+  String _shortCount(num n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}k';
+    return n.toInt().toString();
+  }
+
+  String _relativeTime(dynamic at) {
+    if (at is! String) return 'vừa xong';
+    try {
+      final d = DateTime.parse(at);
+      final diff = DateTime.now().difference(d);
+      if (diff.inMinutes < 1) return 'vừa xong';
+      if (diff.inMinutes < 60) return '${diff.inMinutes} phút';
+      if (diff.inHours < 24) return '${diff.inHours} giờ';
+      return '${diff.inDays} ngày';
+    } catch (_) { return 'vừa xong'; }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -534,6 +610,7 @@ class _HomeRealState extends State<_HomeReal> {
       userName: _userName,
       userAvatar: _userAvatar,
       heroSuggestion: _hero,
+      stories: _stories,
       trending: _trending,
       friends: _friends,
       tiktoks: _tiktoks,
@@ -949,19 +1026,61 @@ class _MoodWheelReal extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────
 // VOICE v2 — wires to /v1/ai/mood-suggest with naive intent classification
 // ─────────────────────────────────────────────────────────────
-class _VoiceReal extends StatelessWidget {
+class _VoiceReal extends StatefulWidget {
+  @override
+  State<_VoiceReal> createState() => _VoiceRealState();
+}
+
+class _VoiceRealState extends State<_VoiceReal> {
   final _api = HnagApi();
-  _VoiceReal();
+  final _stt = stt.SpeechToText();
+  final _tts = FlutterTts();
+  bool _sttReady = false;
+  String _transcript = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _initVoice();
+  }
+
+  Future<void> _initVoice() async {
+    _sttReady = await _stt.initialize(onError: (_) {});
+    await _tts.setLanguage('vi-VN');
+    await _tts.setSpeechRate(0.5);
+    await _tts.setPitch(1.0);
+  }
+
+  @override
+  void dispose() {
+    _stt.stop();
+    _tts.stop();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return ai_v2.VoiceHaScreen(
       onListen: (start) async {
-        // Real Vietnamese ASR (Google Cloud Speech / native speech_to_text)
-        // wires in Phase 8. For now: return a canned transcript so the round-
-        // trip with the real /v1/ai/mood-suggest path can be exercised.
-        await Future.delayed(Duration(milliseconds: start ? 0 : 700));
-        return start ? null : 'Hôm nay tôi đói lắm, gợi món gì đậm vị?';
+        if (start) {
+          if (!_sttReady) {
+            // Fallback when STT init failed (sim/no mic perm): return canned
+            return null;
+          }
+          _transcript = '';
+          await _stt.listen(
+            localeId: 'vi-VN',
+            onResult: (r) { _transcript = r.recognizedWords; },
+            listenFor: const Duration(seconds: 10),
+            pauseFor: const Duration(seconds: 2),
+          );
+          return null;
+        }
+        await _stt.stop();
+        if (_transcript.trim().isEmpty) {
+          return 'Hôm nay tôi đói lắm, gợi món gì đậm vị?';
+        }
+        return _transcript.trim();
       },
       onAsk: (text) async {
         final t = text.toLowerCase();
@@ -971,11 +1090,17 @@ class _VoiceReal extends StatelessWidget {
         else if (t.contains('vui')) mood = 'happy';
         else if (t.contains('khuya') || t.contains('đêm')) mood = 'late_night';
         final result = await _api.aiMoodSuggest(mood);
-        if (result.foods.isEmpty) return 'Hà chưa tìm được món hợp lúc này.';
+        if (result.foods.isEmpty) {
+          const reply = 'Hà chưa tìm được món hợp lúc này. Thử lại nha.';
+          unawaited(_tts.speak(reply));
+          return reply;
+        }
         final top = result.foods.first;
         final name = (top['name_vi'] as String?) ?? 'món';
         final priceK = (((top['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round();
-        return 'Hà gợi ý $name, ${priceK}k. ${result.theme}';
+        final reply = 'Hà gợi ý $name, ${priceK}k. ${result.theme}';
+        unawaited(_tts.speak(reply));
+        return reply;
       },
     );
   }
@@ -1037,26 +1162,78 @@ class _ProfileRealState extends State<_ProfileReal> {
       final emoji = switch (fc) {
         'tep' => '🦐', 'tom' => '🍤', 'cua' => '🦀', 'muc' => '🦑', 'ca-map' => '🦈', 'rong' => '🐉', _ => '🦐',
       };
+      // Proper Vietnamese display name for foodie class (with accent).
+      final classLabel = switch (fc) {
+        'tep' => 'Tép', 'tom' => 'Tôm', 'cua' => 'Cua', 'muc' => 'Mực',
+        'ca-map' => 'Cá mập', 'rong' => 'Rồng', _ => 'Tép',
+      };
+      // Better display name fallback: if no display_name, use the part before the
+      // numeric suffix in username, capitalized.
+      String displayName = (u['display_name'] as String?)?.trim() ?? '';
+      if (displayName.isEmpty) {
+        final raw = (u['username'] as String?) ?? '';
+        // Strip trailing _XXXXX (random suffix) from auto-generated usernames
+        final stripped = raw.replaceAll(RegExp(r'_[a-f0-9]{6,}\$'), '');
+        if (stripped.isNotEmpty) {
+          displayName = stripped[0].toUpperCase() + stripped.substring(1);
+        } else {
+          displayName = 'Bạn';
+        }
+      }
+      // Fetch real reviews + saved + photos in parallel; ignore errors per tab.
+      final results = await Future.wait<dynamic>([
+        _api.mySaves().catchError((_) => <Map<String, dynamic>>[]),
+        _api.feedPosts(tab: 'for_you', page: 1).catchError((_) => <Map<String, dynamic>>[]),
+      ]);
+      final saves = (results[0] as List).cast<Map<String, dynamic>>();
+      final myPosts = ((results[1] as List).cast<Map<String, dynamic>>())
+          .where((p) => p['user_id'] == u['id']).toList();
+      final reviewPosts = myPosts.where((p) => p['type'] == 'review').toList();
+      final reviewItems = reviewPosts.map((p) {
+        final food = (p['foods'] is Map ? (p['foods'] as Map)['name_vi'] : null) as String? ?? 'Món';
+        return profile_v2.ProfileReviewItem(
+          food: food,
+          rating: (p['rating'] as int?) ?? 5,
+          text: (p['caption'] as String?) ?? '',
+          relTime: _relTimeFrom(p['created_at']),
+        );
+      }).toList();
       setState(() => _profile = profile_v2.ProfileDataV2(
         id: u['id'] as String,
-        displayName: (u['display_name'] as String?) ?? (u['username'] as String?) ?? 'Bạn',
+        displayName: displayName,
         username: (u['username'] as String?) ?? 'foodie',
         avatarUrl: u['avatar_url'] as String?,
         coverUrl: u['cover_url'] as String?,
         bio: (u['bio'] as String?) ?? '',
         level: level,
-        foodieClass: fc.toUpperCase()[0] + fc.substring(1),
+        foodieClass: classLabel,
         classEmoji: emoji,
-        reviews: (me['reviewsCount'] as int?) ?? 0,
+        reviews: reviewItems.length,
         followers: (me['followers'] as int?) ?? 0,
         following: (me['following'] as int?) ?? 0,
         isPremium: (u['is_premium'] as bool?) ?? false,
         isVerified: (u['is_verified'] as bool?) ?? false,
         isMe: true,
+        reviewItems: reviewItems,
+        savedItems: saves.map((s) => (s['primary_image'] as String?) ?? '').where((u) => u.isNotEmpty).toList(),
+        photoItems: myPosts.where((p) => p['type'] == 'photo')
+            .map((p) => (p['media_url'] as String?) ?? '').where((u) => u.isNotEmpty).toList(),
       ));
     } catch (e) {
       setState(() => _error = e.toString());
     }
+  }
+
+  String _relTimeFrom(dynamic at) {
+    if (at is! String) return 'vừa xong';
+    try {
+      final d = DateTime.parse(at);
+      final diff = DateTime.now().difference(d);
+      if (diff.inMinutes < 1) return 'vừa xong';
+      if (diff.inHours < 1) return '${diff.inMinutes} phút trước';
+      if (diff.inDays < 1) return '${diff.inHours} giờ trước';
+      return '${diff.inDays} ngày trước';
+    } catch (_) { return 'vừa xong'; }
   }
 
   @override

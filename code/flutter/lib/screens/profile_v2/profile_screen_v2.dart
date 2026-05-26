@@ -9,6 +9,14 @@ import '../../design/food_gradients.dart';
 import '../../design/theme.dart';
 import '../../widgets/ds/ds.dart';
 
+class ProfileReviewItem {
+  final String food;
+  final int rating;
+  final String text;
+  final String relTime;
+  const ProfileReviewItem({required this.food, required this.rating, required this.text, required this.relTime});
+}
+
 class ProfileDataV2 {
   final String id;
   final String displayName;
@@ -27,6 +35,9 @@ class ProfileDataV2 {
   final bool isVerified;
   final bool isMe;
   final bool followed;
+  final List<ProfileReviewItem> reviewItems;
+  final List<String> savedItems; // image URLs
+  final List<String> photoItems; // image URLs
 
   const ProfileDataV2({
     required this.id,
@@ -46,6 +57,9 @@ class ProfileDataV2 {
     this.isVerified = false,
     this.isMe = false,
     this.followed = false,
+    this.reviewItems = const [],
+    this.savedItems = const [],
+    this.photoItems = const [],
   });
 }
 
@@ -92,7 +106,9 @@ class _ProfileScreenV2State extends State<ProfileScreenV2> {
           body: NestedScrollView(
             headerSliverBuilder: (_, __) => [
               SliverAppBar(
-                expandedHeight: 220,
+                // Shorter cover when user has no real cover photo (avoids the
+                // huge orange-gradient block in the screenshot).
+                expandedHeight: (p.coverUrl != null && p.coverUrl!.isNotEmpty) ? 220 : 140,
                 pinned: false,
                 automaticallyImplyLeading: false,
                 backgroundColor: Colors.transparent,
@@ -278,14 +294,46 @@ class _ProfileScreenV2State extends State<ProfileScreenV2> {
 
   Widget _buildTabContent(SemanticTokens t) {
     if (_tab == 'Reviews') {
+      // Real data only — no hardcoded demo. If user has 0 reviews show empty state.
+      if (widget.profile.reviews == 0) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            children: [
+              const SizedBox(height: 24),
+              const Text('✍️', style: TextStyle(fontSize: 48)),
+              const SizedBox(height: 12),
+              Text(
+                widget.profile.isMe ? 'Bạn chưa viết review nào' : 'Chưa có review',
+                style: HnagType.h4.copyWith(color: t.text, fontFamily: HnagFonts.display),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.profile.isMe
+                    ? 'Ăn xong, review 1 dòng → +50 XP'
+                    : 'Khi ${widget.profile.displayName} review, hiện ở đây',
+                textAlign: TextAlign.center,
+                style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+              ),
+              if (widget.profile.isMe) ...[
+                const SizedBox(height: 18),
+                HnagButton(
+                  label: 'Viết review đầu tiên',
+                  iconLeading: 'edit',
+                  variant: BtnVariant.gradient,
+                  size: BtnSize.md,
+                  onPressed: () {},
+                ),
+              ],
+            ],
+          ),
+        );
+      }
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Column(
           children: [
-            for (final r in const [
-              (food: 'Bún bò Huế', rating: '⭐⭐⭐⭐⭐', text: '"Đậm vị, đủ cay, đúng món miền Trung tôi thích."', time: '2 ngày trước'),
-              (food: 'Phở Lý Quốc Sư', rating: '⭐⭐⭐⭐⭐', text: '"Phở ngon nhất quận 3, đáng đồng tiền."', time: '5 ngày trước'),
-            ]) ...[
+            for (final r in widget.profile.reviewItems) ...[
               HnagCard(
                 padding: const EdgeInsets.all(14),
                 child: Column(
@@ -294,13 +342,13 @@ class _ProfileScreenV2State extends State<ProfileScreenV2> {
                     Row(
                       children: [
                         Expanded(child: Text(r.food, style: HnagType.h4.copyWith(color: t.text, fontFamily: HnagFonts.display))),
-                        Text(r.rating, style: const TextStyle(fontSize: 14)),
+                        Text('⭐' * r.rating.round(), style: const TextStyle(fontSize: 14)),
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Text(r.text, style: HnagType.body.copyWith(color: t.text, fontStyle: FontStyle.italic, fontFamily: HnagFonts.body)),
+                    Text('"${r.text}"', style: HnagType.body.copyWith(color: t.text, fontStyle: FontStyle.italic, fontFamily: HnagFonts.body)),
                     const SizedBox(height: 6),
-                    Text(r.time, style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body)),
+                    Text(r.relTime, style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body)),
                   ],
                 ),
               ),
@@ -348,18 +396,46 @@ class _ProfileScreenV2State extends State<ProfileScreenV2> {
         ),
       );
     }
-    // Saved + Photos: food gradient grid
+    // Saved + Photos: real data from props
+    final items = _tab == 'Saved' ? widget.profile.savedItems : widget.profile.photoItems;
+    if (items.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          children: [
+            const SizedBox(height: 24),
+            Text(_tab == 'Saved' ? '🔖' : '📷', style: const TextStyle(fontSize: 48), textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            Text(
+              widget.profile.isMe
+                  ? (_tab == 'Saved' ? 'Chưa lưu món nào' : 'Chưa có ảnh nào')
+                  : (_tab == 'Saved' ? 'Không có gì để hiển thị' : 'Chưa có ảnh'),
+              style: HnagType.h4.copyWith(color: t.text, fontFamily: HnagFonts.display),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _tab == 'Saved'
+                  ? (widget.profile.isMe ? 'Vuốt phải card món để lưu' : '')
+                  : (widget.profile.isMe ? 'Chụp ảnh khi ăn → review nhanh' : ''),
+              textAlign: TextAlign.center,
+              style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        itemCount: 9,
+        itemCount: items.length,
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 3, mainAxisSpacing: 4, crossAxisSpacing: 4, childAspectRatio: 1,
         ),
         itemBuilder: (_, i) => HnagPhoto(
-          foodSlug: FoodGradients.all.keys.elementAt(i % FoodGradients.all.length),
+          imageUrl: items[i],
+          foodSlug: 'pho',
           aspectRatio: 1, radius: HnagRadius.sm,
         ),
       ),
