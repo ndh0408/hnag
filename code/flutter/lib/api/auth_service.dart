@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 class AuthUser {
   final String id;
@@ -95,6 +96,68 @@ class AuthService {
       user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
     );
     return true;
+  }
+
+  /// Verify a phone OTP, persist tokens.
+  Future<bool> verifyPhoneOtp(String phone, String code) async {
+    final r = await http.post(
+      Uri.parse('$_baseUrl/v1/auth/phone-otp/verify'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'phone': phone.trim(),
+        'code': code,
+        'device': _deviceInfo(),
+      }),
+    ).timeout(const Duration(seconds: 12));
+    if (r.statusCode != 200) {
+      if (r.statusCode == 401) return false;
+      throw _httpError(r);
+    }
+    final body = jsonDecode(r.body) as Map<String, dynamic>;
+    final data = body['data'] as Map<String, dynamic>;
+    await _persistTokens(
+      access: data['accessToken'] as String,
+      refresh: data['refreshToken'] as String,
+      user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
+    );
+    return true;
+  }
+
+  /// Sign in with Apple. Returns true on success.
+  /// Uses sign_in_with_apple package to get the identityToken, then sends it
+  /// to backend /v1/auth/apple for validation + session creation.
+  Future<bool> signInWithApple() async {
+    // Lazy import via dynamic dispatch so non-iOS builds don't crash.
+    try {
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: [AppleIDAuthorizationScopes.email, AppleIDAuthorizationScopes.fullName],
+      );
+      final idToken = credential.identityToken;
+      if (idToken == null) return false;
+      final r = await http.post(
+        Uri.parse('$_baseUrl/v1/auth/apple'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identityToken': idToken,
+          if (credential.authorizationCode != null) 'authorizationCode': credential.authorizationCode,
+          if (credential.givenName != null || credential.familyName != null)
+            'fullName': '${credential.givenName ?? ''} ${credential.familyName ?? ''}'.trim(),
+          if (credential.email != null) 'email': credential.email,
+          'device': _deviceInfo(),
+        }),
+      ).timeout(const Duration(seconds: 15));
+      if (r.statusCode != 200 && r.statusCode != 201) return false;
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      final data = body['data'] as Map<String, dynamic>;
+      await _persistTokens(
+        access: data['accessToken'] as String,
+        refresh: data['refreshToken'] as String,
+        user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Map<String, dynamic> _deviceInfo() => {

@@ -43,7 +43,20 @@ class TikTokVideoData {
 class TikTokFeedScreen extends StatefulWidget {
   final List<TikTokVideoData> videos;
   final VoidCallback? onClose;
-  const TikTokFeedScreen({super.key, required this.videos, this.onClose});
+  /// `(videoId, liked)` — return true if backend confirmed.
+  final Future<bool> Function(String videoId, bool like)? onToggleLike;
+  final void Function(TikTokVideoData)? onShare;
+  final void Function(TikTokVideoData)? onComment;
+  final void Function(TikTokVideoData)? onSave;
+  const TikTokFeedScreen({
+    super.key,
+    required this.videos,
+    this.onClose,
+    this.onToggleLike,
+    this.onShare,
+    this.onComment,
+    this.onSave,
+  });
 
   @override
   State<TikTokFeedScreen> createState() => _TikTokFeedScreenState();
@@ -69,7 +82,15 @@ class _TikTokFeedScreenState extends State<TikTokFeedScreen> {
               scrollDirection: Axis.vertical,
               itemCount: widget.videos.length,
               onPageChanged: (i) => setState(() => _index = i),
-              itemBuilder: (_, i) => _VideoPage(video: widget.videos[i]),
+              itemBuilder: (_, i) => _VideoPage(
+                video: widget.videos[i],
+                onToggleLike: widget.onToggleLike == null
+                    ? null
+                    : (liked) => widget.onToggleLike!(widget.videos[i].id, liked),
+                onShare: widget.onShare == null ? null : () => widget.onShare!(widget.videos[i]),
+                onComment: widget.onComment == null ? null : () => widget.onComment!(widget.videos[i]),
+                onSave: widget.onSave == null ? null : () => widget.onSave!(widget.videos[i]),
+              ),
             ),
             SafeArea(
               child: Padding(
@@ -96,7 +117,11 @@ class _TikTokFeedScreenState extends State<TikTokFeedScreen> {
 
 class _VideoPage extends StatefulWidget {
   final TikTokVideoData video;
-  const _VideoPage({required this.video});
+  final Future<bool> Function(bool liked)? onToggleLike;
+  final VoidCallback? onShare;
+  final VoidCallback? onComment;
+  final VoidCallback? onSave;
+  const _VideoPage({required this.video, this.onToggleLike, this.onShare, this.onComment, this.onSave});
 
   @override
   State<_VideoPage> createState() => _VideoPageState();
@@ -209,17 +234,30 @@ class _VideoPageState extends State<_VideoPage> {
                 icon: _liked ? 'heart' : 'heartOutline',
                 color: _liked ? HnagColors.chili500 : Colors.white,
                 label: _short(_likes),
-                onTap: () => setState(() {
-                  _liked = !_liked;
-                  _likes += _liked ? 1 : -1;
-                }),
+                onTap: () async {
+                  final next = !_liked;
+                  setState(() {
+                    _liked = next;
+                    _likes += next ? 1 : -1;
+                  });
+                  // Persist to backend; revert UI on failure.
+                  if (widget.onToggleLike != null) {
+                    final ok = await widget.onToggleLike!(next);
+                    if (!ok && mounted) {
+                      setState(() {
+                        _liked = !next;
+                        _likes += next ? -1 : 1;
+                      });
+                    }
+                  }
+                },
               ),
               const SizedBox(height: 18),
-              _Action(icon: 'chat', color: Colors.white, label: _short(v.comments)),
+              _Action(icon: 'chat', color: Colors.white, label: _short(v.comments), onTap: widget.onComment),
               const SizedBox(height: 18),
-              _Action(icon: 'share', color: Colors.white, label: _short(v.shares)),
+              _Action(icon: 'share', color: Colors.white, label: _short(v.shares), onTap: widget.onShare),
               const SizedBox(height: 18),
-              _Action(icon: 'bookmark', color: Colors.white, label: _short(v.saves)),
+              _Action(icon: 'bookmark', color: Colors.white, label: _short(v.saves), onTap: widget.onSave),
             ],
           ),
         ),

@@ -135,29 +135,36 @@ class _AuthFlowState extends State<_AuthFlow> {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => auth_v2.LoginScreenV2(
         onSendOtp: (emailOrPhone) async {
-          if (emailOrPhone.contains('@')) {
+          // Both email + phone OTP go through real backend endpoints.
+          final isEmail = emailOrPhone.contains('@');
+          if (isEmail) {
             await widget.onDoLogin(emailOrPhone);
           } else {
-            // Phone OTP not wired yet — fall back to email flow path.
-            // TODO Phase 8: hook phone OTP backend.
-            await widget.onDoLogin(emailOrPhone);
+            await HnagApi().sendPhoneOtp(emailOrPhone);
           }
           if (!mounted) return;
           Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => auth_v2.OtpScreen(
               destination: emailOrPhone,
               onVerify: (otp) async {
-                if (emailOrPhone.contains('@')) {
+                if (isEmail) {
                   return AuthService.instance.verifyEmailOtp(emailOrPhone, otp);
                 }
-                return false;
+                // Phone OTP verify — persist the returned session tokens via
+                // AuthService so the rest of the app sees the logged-in user.
+                return AuthService.instance.verifyPhoneOtp(emailOrPhone, otp);
               },
-              onResend: () => widget.onDoLogin(emailOrPhone),
+              onResend: () => isEmail
+                  ? widget.onDoLogin(emailOrPhone)
+                  : HnagApi().sendPhoneOtp(emailOrPhone),
             ),
           ));
         },
-        onApple: null, // wired in Phase 8
-        onGoogle: null,
+        onApple: () async {
+          final ok = await AuthService.instance.signInWithApple();
+          if (ok && mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+        },
+        onGoogle: null, // Google SSO requires GCP OAuth setup; deferred
         onGuest: null,
       ),
     ));

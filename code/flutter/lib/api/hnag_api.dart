@@ -280,6 +280,32 @@ class HnagApi {
     }
   }
 
+  // ─── AI feedback (learn from swipes / orders / cooks) ──────────────────
+  /// Records user behavior on an AI suggestion. action ∈ view/save/skip/cook/
+  /// order/dine/rate. Backend updates personalization weights.
+  Future<bool> aiFeedback({
+    required String sessionId,
+    required String foodId,
+    required String action,
+    int? rating,
+    String? reason,
+  }) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/ai/feedback'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'sessionId': sessionId,
+              'foodId': foodId,
+              'action': action,
+              if (rating != null) 'rating': rating,
+              if (reason != null) 'reason': reason,
+            }),
+          ).timeout(const Duration(seconds: 8)));
+      return r.statusCode == 200;
+    } catch (_) { return false; }
+  }
+
   // ─── Phone OTP ───────────────────────────────────────────────────────
   /// Send 6-digit OTP to a Vietnamese phone number (E.164 or 0-prefixed).
   /// Backend hashes + rate-limits per memory; never returns the code.

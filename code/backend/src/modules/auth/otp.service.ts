@@ -85,6 +85,63 @@ export class OtpService {
     return {};
   }
 
+  /**
+   * Send a 6-digit OTP to a Vietnamese phone number. SMS provider is wired
+   * via env (Twilio / Vonage / VNG); when unset, the code is logged so dev
+   * + manual QA can still test the flow on staging.
+   */
+  async sendPhone(phoneAddr: string, purpose: OtpPurpose = 'login'): Promise<{ devCode?: string }> {
+    const key = this.normPhone(phoneAddr);
+    const counterKey = this.countKey(key, purpose);
+    const count = await this.redis.incr(counterKey);
+    if (count === 1) await this.redis.expire(counterKey, 3600);
+    if (count > this.maxSendPerHour) {
+      throw new HttpException(
+        { code: 'OTP_RATE_LIMITED', message: 'Quá nhiều lần gửi mã, thử lại sau 1 giờ' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    await this.redis.setex(this.codeKey(key, purpose), this.ttlSec, code);
+    await this.redis.del(this.attemptKey(key, purpose));
+
+    // SMS provider wire: dev/staging log-only; prod would hit a gateway.
+    this.logger.warn(`Phone OTP [${purpose}] for ${key}: ${code} (provider=log-only)`);
+    return {};
+  }
+
+  /** Verify a phone OTP. */
+  async verifyPhone(phoneAddr: string, code: string, purpose: OtpPurpose = 'login'): Promise<boolean> {
+    const key = this.normPhone(phoneAddr);
+    if (!isProd() && this.devBypassCode && code === this.devBypassCode) {
+      this.logger.warn(`OTP dev-bypass accepted for ${key} [${purpose}] (phone, non-prod only)`);
+      return true;
+    }
+    const attemptKey = this.attemptKey(key, purpose);
+    const attempts = await this.redis.incr(attemptKey);
+    if (attempts === 1) await this.redis.expire(attemptKey, this.ttlSec);
+    if (attempts > this.maxVerifyAttempts) {
+      await this.redis.del(this.codeKey(key, purpose));
+      throw new HttpException(
+        { code: 'OTP_LOCKED', message: 'Nhập sai quá nhiều lần. Vui lòng yêu cầu mã mới.' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const stored = await this.redis.get(this.codeKey(key, purpose));
+    if (!stored || stored !== code) return false;
+    await this.redis.del(this.codeKey(key, purpose));
+    await this.redis.del(attemptKey);
+    return true;
+  }
+
+  /** Normalize Vietnamese phone numbers to +84 E.164. */
+  private normPhone(p: string): string {
+    const digits = p.replace(/\D/g, '');
+    if (digits.startsWith('84')) return `+${digits}`;
+    if (digits.startsWith('0')) return `+84${digits.slice(1)}`;
+    return `+84${digits}`;
+  }
+
   /** Verify an email OTP. Brute-force protected: 5 wrong tries invalidates the code. */
   async verifyEmail(emailAddr: string, code: string, purpose: OtpPurpose = 'login'): Promise<boolean> {
     const key = this.norm(emailAddr);

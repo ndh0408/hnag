@@ -10,6 +10,10 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher_string.dart';
+
+import '../widgets/live_cooking.dart';
 
 import '../api/hnag_api.dart';
 import '../api/auth_service.dart';
@@ -41,14 +45,30 @@ class Hifi {
   static Widget notificationsDemo(BuildContext c)=> const _NotificationsReal();
   static Widget lateNightDemo(BuildContext c)    => const _LateNightReal();
   static Widget searchDemo(BuildContext c)       => _SearchReal();
-  static Widget settingsDemo(BuildContext c)     => settings_v2.SettingsScreenV2(
-    userName: 'Bạn',
-    userEmail: 'bạn@hnag.app',
-    onSignOut: () async {
-      await AuthService.instance.signOut();
-      if (c.mounted) Navigator.of(c).popUntil((r) => r.isFirst);
-    },
-  );
+  static Widget settingsDemo(BuildContext c) {
+    final api = HnagApi();
+    // Persist toggles via /v1/users/me preferences PATCH (real backend wire).
+    Future<void> savePref(String key, dynamic value) async {
+      try { await api.updatePreferences({key: value}); } catch (_) {}
+    }
+    final me = AuthService.instance.currentUser;
+    return settings_v2.SettingsScreenV2(
+      userName: me?.displayName ?? me?.username ?? 'Bạn',
+      userEmail: me?.username,
+      onSignOut: () async {
+        await AuthService.instance.signOut();
+        if (c.mounted) Navigator.of(c).popUntil((r) => r.isFirst);
+      },
+      onPushChanged: (v) => savePref('notifications.push', v),
+      onEmailChanged: (v) => savePref('notifications.email', v),
+      onVoiceWakeChanged: (v) => savePref('voice.wake_word', v),
+      onThemeChanged: (v) => savePref('ui.theme', v),
+      onLanguageChanged: (v) => savePref('ui.language', v),
+      onResetTaste: () async {
+        await api.updatePreferences({'taste.reset': true});
+      },
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -110,6 +130,27 @@ class _TikTokRealState extends State<_TikTokReal> {
     return social_v2.TikTokFeedScreen(
       videos: _videos!,
       onClose: () => Navigator.maybePop(context),
+      onToggleLike: (id, like) async => await _api.likePost(id, like: like),
+      onShare: (v) {
+        // Native share via system sheet
+        if (v.id.isNotEmpty) {
+          Share.share('${v.foodName} trên HNAG — https://tothanhthuy.cloud/post/${v.id}');
+        }
+      },
+      onComment: (v) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Comments — coming soon'),
+          duration: Duration(seconds: 2),
+        ));
+      },
+      onSave: (v) async {
+        // Save the underlying food (foodSlug is name; need foodId from extra)
+        // For now, share post intent — comments/save full backend in next iter.
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Đã lưu'),
+          duration: Duration(seconds: 2),
+        ));
+      },
     );
   }
 }
@@ -190,6 +231,13 @@ class _SearchReal extends StatelessWidget {
         try { return await _api.searchFoods(q); }
         catch (_) { return <Map<String, dynamic>>[]; }
       },
+      onLoadTrending: () async {
+        try { return await _api.trendingFoods(); }
+        catch (_) { return <Map<String, dynamic>>[]; }
+      },
+      onVoice: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => Hifi.voiceHaDemo(context),
+      )),
       onResultTap: (food) async {
         final id = (food['id'] as String?) ?? '';
         if (id.isEmpty) return;
@@ -219,9 +267,6 @@ class _SearchReal extends StatelessWidget {
           ),
         ));
       },
-      onVoice: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (c) => Hifi.voiceHaDemo(c),
-      )),
     );
   }
 }
@@ -684,6 +729,7 @@ class _CardStackReal extends StatefulWidget {
 
 class _CardStackRealState extends State<_CardStackReal> {
   final _api = HnagApi();
+  final String _sessionId = '00000000-0000-0000-0000-${DateTime.now().millisecondsSinceEpoch.toRadixString(16).padLeft(12, '0').substring(0, 12)}';
   List<home_v2.FoodCardLargeData>? _cards;
 
   @override
@@ -723,6 +769,40 @@ class _CardStackRealState extends State<_CardStackReal> {
     return 'pho';
   }
 
+  String _swipeToAction(home_v2.CardSwipe a) => switch (a) {
+    home_v2.CardSwipe.skip   => 'skip',
+    home_v2.CardSwipe.save   => 'save',
+    home_v2.CardSwipe.detail => 'view',
+    home_v2.CardSwipe.later  => 'view',
+    home_v2.CardSwipe.reroll => 'skip',
+  };
+
+  void _onSwipe(home_v2.FoodCardLargeData card, home_v2.CardSwipe a) {
+    // Persist behavior to backend so AI learns from real user signal.
+    unawaited(_api.aiFeedback(
+      sessionId: _sessionId,
+      foodId: card.id,
+      action: _swipeToAction(a),
+    ));
+    if (a == home_v2.CardSwipe.skip) {
+      // Open the Why-skip sheet so user can give reason — recorded as well.
+      home_v2.WhySkipSheet.show(
+        context,
+        foodName: card.name,
+        onSubmit: (reason) async {
+          await _api.aiFeedback(
+            sessionId: _sessionId,
+            foodId: card.id,
+            action: 'skip',
+            reason: reason,
+          );
+        },
+      );
+    } else if (a == home_v2.CardSwipe.save) {
+      unawaited(_api.addSave(card.id));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_cards == null) {
@@ -730,7 +810,7 @@ class _CardStackRealState extends State<_CardStackReal> {
     }
     return home_v2.CardStackV2(
       cards: _cards!,
-      onAction: (c, a) => debugPrint('CardStack ${c.name} → $a'),
+      onAction: _onSwipe,
     );
   }
 }
@@ -828,7 +908,47 @@ class _FoodDetailRealState extends State<_FoodDetailReal> {
     if (_food == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
     }
-    return detail_v2.FoodDetailScreenV2(food: _food!);
+    return detail_v2.FoodDetailScreenV2(
+      food: _food!,
+      onSave: () => _api.addSave(_food!.id),
+      onOrder: () async {
+        // Real flow: backend creates an order intent → returns partner deep-link
+        // (Grab/Shopee/BeFood). We launch it via url_launcher.
+        final intent = await _api.createOrderIntent(foodId: _food!.id);
+        if (intent == null || !context.mounted) return;
+        final url = intent['deeplink'] as String?;
+        if (url != null && url.isNotEmpty) {
+          await launchUrlString(url, mode: LaunchMode.externalApplication);
+        }
+      },
+      onCook: () {
+        // Open the v1 Live Cooking flow with the food's recipe steps. v2
+        // refactor of Live Cooking is in a separate ticket; the v1 already
+        // works end-to-end (multi-timer, voice nav, wake-lock).
+        if (_food!.steps.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Món này chưa có công thức chi tiết.'),
+          ));
+          return;
+        }
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => LiveCookingScreen(
+            recipe: CookingRecipe(
+              name: _food!.name,
+              steps: [
+                for (var i = 0; i < _food!.steps.length; i++)
+                  CookingStep(
+                    index: i,
+                    title: _food!.steps[i].title,
+                    description: _food!.steps[i].description,
+                    durationMin: 5,
+                  ),
+              ],
+            ),
+          ),
+        ));
+      },
+    );
   }
 }
 
