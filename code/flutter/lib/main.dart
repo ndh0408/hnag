@@ -14,9 +14,8 @@ import 'widgets/card_stack.dart';
 import 'widgets/voice_assistant.dart';
 import 'widgets/live_cooking.dart';
 
-import 'screens/splash_screen.dart';
 import 'screens/onboarding_screen.dart';
-import 'screens/login_screen.dart';
+import 'screens/auth/auth.dart' as auth_v2;
 import 'screens/restaurant_claim_screen.dart';
 import 'screens/mood_selector_screen.dart';
 import 'screens/mood_result_screen.dart';
@@ -94,17 +93,16 @@ class _BootState extends State<_Boot> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_splashDone) return SplashScreen(onReady: () => setState(() => _splashDone = true));
+    if (!_splashDone) {
+      return auth_v2.SplashScreenV2(onReady: () => setState(() => _splashDone = true));
+    }
 
     return StreamBuilder<AuthUser?>(
       stream: AuthService.instance.userChanges,
       initialData: AuthService.instance.currentUser,
       builder: (_, snap) {
         if (snap.data == null) {
-          return LoginScreen(
-            onSendOtp: (email) async { await _doLogin(email); },
-            onVerifyOtp: (email, otp) => AuthService.instance.verifyEmailOtp(email, otp),
-          );
+          return _AuthFlow(onDoLogin: _doLogin);
         }
         if (!_onboarded) {
           return OnboardingScreen(onComplete: (dna) async {
@@ -115,6 +113,67 @@ class _BootState extends State<_Boot> {
           });
         }
         return const RootScreen();
+      },
+    );
+  }
+}
+
+/// New v2 auth flow: Welcome → Login (email/phone) → OTP. Falls through to
+/// the original onboarding once `AuthService.currentUser` flips non-null.
+class _AuthFlow extends StatefulWidget {
+  final Future<bool> Function(String email) onDoLogin;
+  const _AuthFlow({required this.onDoLogin});
+  @override
+  State<_AuthFlow> createState() => _AuthFlowState();
+}
+
+class _AuthFlowState extends State<_AuthFlow> {
+  bool _welcomeDone = false;
+
+  void _goLogin() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => auth_v2.LoginScreenV2(
+        onSendOtp: (emailOrPhone) async {
+          if (emailOrPhone.contains('@')) {
+            await widget.onDoLogin(emailOrPhone);
+          } else {
+            // Phone OTP not wired yet — fall back to email flow path.
+            // TODO Phase 8: hook phone OTP backend.
+            await widget.onDoLogin(emailOrPhone);
+          }
+          if (!mounted) return;
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => auth_v2.OtpScreen(
+              destination: emailOrPhone,
+              onVerify: (otp) async {
+                if (emailOrPhone.contains('@')) {
+                  return AuthService.instance.verifyEmailOtp(emailOrPhone, otp);
+                }
+                return false;
+              },
+              onResend: () => widget.onDoLogin(emailOrPhone),
+            ),
+          ));
+        },
+        onApple: null, // wired in Phase 8
+        onGoogle: null,
+        onGuest: null,
+      ),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_welcomeDone) {
+      return auth_v2.WelcomeScreen(
+        onStart: () => setState(() => _welcomeDone = true),
+        onSignIn: _goLogin,
+      );
+    }
+    return auth_v2.PermissionsScreen(
+      onComplete: (_) async {
+        if (!mounted) return;
+        _goLogin();
       },
     );
   }
