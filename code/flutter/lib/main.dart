@@ -14,9 +14,8 @@ import 'widgets/card_stack.dart';
 import 'widgets/voice_assistant.dart';
 import 'widgets/live_cooking.dart';
 
-import 'screens/onboarding_screen.dart';
+import 'screens/onboarding/onboarding_flow.dart';
 import 'screens/auth/auth.dart' as auth_v2;
-import 'screens/restaurant_claim_screen.dart';
 import 'screens/mood_selector_screen.dart';
 import 'screens/mood_result_screen.dart';
 import 'screens/fridge_scan_screen.dart';
@@ -28,7 +27,6 @@ import 'screens/settings_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/food_detail_screen.dart';
-import 'screens/restaurant_detail_screen.dart';
 import 'screens/meal_planner_screen.dart';
 import 'screens/nearby_restaurants_screen.dart';
 
@@ -105,8 +103,8 @@ class _BootState extends State<_Boot> {
           return _AuthFlow(onDoLogin: _doLogin);
         }
         if (!_onboarded) {
-          return OnboardingScreen(onComplete: (dna) async {
-            // Persist taste preferences to the backend, then mark done.
+          return OnboardingFlow(onComplete: (dna) async {
+            // Persist Food DNA to the backend, then mark done.
             try { await HnagApi().updatePreferences(dna); } catch (_) {}
             await AuthService.instance.setOnboarded();
             if (mounted) setState(() => _onboarded = true);
