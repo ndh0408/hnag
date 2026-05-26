@@ -189,11 +189,15 @@ class _RootScreenState extends State<RootScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Production: bottom-nav uses Hi-Fi v2 screens fed by real HnagApi data.
+    // v1 widgets (HomeFeed, CardStack, FoodDetailScreen, ProfileScreen) are
+    // still reachable individually for backwards-compat, but the default
+    // user-facing flow IS the new design.
     final pages = [
-      const _HomeTab(),
-      const _AiDecideTab(),
+      Hifi.homeDemo(context),       // Home v2 (Hi-Fi)
+      Hifi.aiDecideDemo(context),   // AI Decide v2 (Hi-Fi)
       const _ToolsTab(),
-      const _ProfileTab(),
+      Hifi.profileDemo(context),    // Profile v2 (Hi-Fi)
     ];
     return Scaffold(
       body: pages[_index],
@@ -623,27 +627,39 @@ class _ToolsTab extends StatelessWidget {
     ];
     final hiFi = [
       ('🏠', 'Home v2', 'Real /v1/foods/trending + /v1/ai/suggest + /v1/me', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.homeDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.homeDemo(context)))),
       ('🎯', 'AI Decide v2', '6-mode picker → real /v1/ai/suggest', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.aiDecideDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.aiDecideDemo(context)))),
       ('🃏', 'Card Stack v2', 'Swipe 8 món thật từ /v1/ai/suggest', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.cardStackDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.cardStackDemo(context)))),
       ('🍜', 'Food Detail v2', 'Fetch /v1/foods/:id thật', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.foodDetailDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.foodDetailDemo(context)))),
       ('🏪', 'Restaurant Detail v2', 'Fetch /v1/restaurants/nearby thật', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.restaurantDetailDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.restaurantDetailDemo(context)))),
       ('🛒', 'Cart v2', 'Items từ /v1/foods/trending → checkout', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.cartDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.cartDemo(context)))),
       ('📦', 'Order Tracking v2', 'Timeline + driver (WS subscribe TODO)', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.orderTrackingDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.orderTrackingDemo(context)))),
       ('💖', 'Mood Wheel v2', '8 mood radial → /v1/ai/mood-suggest thật', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.moodWheelDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.moodWheelDemo(context)))),
       ('🎤', 'Voice Hà v2', 'Intent classify → /v1/ai/mood-suggest', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.voiceHaDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.voiceHaDemo(context)))),
       ('💎', 'Premium v2', 'Dark pricing → /v1/billing/checkout', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.premiumDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.premiumDemo(context)))),
       ('👤', 'Profile v2', 'Fetch /v1/me + /v1/streaks thật', () =>
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.profileDemo(context)))),
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.profileDemo(context)))),
+      ('📺', 'TikTok Feed v2', 'Vertical video feed từ trending foods', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.tiktokFeedDemo(context)))),
+      ('📅', 'Meal Planner v2', '7-day grid + AI auto-fill 21 món', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.mealPlannerDemo(context)))),
+      ('🗳️', 'Group Voting v2', 'Realtime vote + chat + reveal', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.groupVotingDemo(context)))),
+      ('🔔', 'Notifications v2', 'AI + trending + streak grouped by date', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.notificationsDemo(context)))),
+      ('🌙', 'Late Night Mode', 'Dark gradient · còn mở 24h', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.lateNightDemo(context)))),
+      ('⚙️', 'Settings v2', 'Sectioned · theme/lang/voice picker', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.settingsDemo(context)))),
     ];
     return SafeArea(
       child: ListView(

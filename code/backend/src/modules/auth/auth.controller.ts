@@ -40,8 +40,10 @@ export class AuthController {
   @Post('email-otp/send')
   @HttpCode(200)
   async sendEmailOtp(@Body(new ZodValidationPipe(SendEmailOtpDto)) body: z.infer<typeof SendEmailOtpDto>) {
-    const out = await this.otp.sendEmail(body.email, 'login');
-    return { sent: true, ...(out.devCode ? { devCode: out.devCode } : {}) };
+    // SECURITY (audit hnag-audit-2026-05): never spread `out` into the
+    // response — `devCode` MUST NOT appear in the body under any environment.
+    await this.otp.sendEmail(body.email, 'login');
+    return { sent: true };
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })

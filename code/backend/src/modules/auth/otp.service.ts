@@ -62,10 +62,16 @@ export class OtpService {
     await this.redis.setex(this.codeKey(key, purpose), this.ttlSec, code);
     await this.redis.del(this.attemptKey(key, purpose)); // reset attempt counter on new code
 
+    // Audit hnag-audit-2026-05: NEVER return devCode in the response. Even
+    // in non-prod local dev, the code must be looked up via logs or a dedicated
+    // debug endpoint guarded by IS_DEV — never piggy-backed on /auth/otp/email.
+    // This eliminates account-takeover via the response body entirely, even
+    // under misconfigured NODE_ENV / accidentally enabled flags.
     if (!this.email.configured()) {
+      // The log-only mode is the only place the code surfaces; only the server
+      // operator with shell access sees it.
       this.logger.warn(`Email OTP [${purpose}] for ${key}: ${code} (provider=log-only)`);
-      // Only ever leak the code in NON-production, and only when explicitly opted in.
-      return !isProd() && process.env.OTP_RETURN_CODE_IN_RESPONSE === '1' ? { devCode: code } : {};
+      return {};
     }
     try {
       await this.email.sendOtp(key, code);

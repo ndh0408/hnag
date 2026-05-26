@@ -15,9 +15,11 @@ import 'detail_v2/detail_v2.dart' as detail_v2;
 import 'ai_v2/ai_v2.dart' as ai_v2;
 import 'premium_v2/premium_v2.dart' as premium_v2;
 import 'profile_v2/profile_v2.dart' as profile_v2;
+import 'social_v2/social_v2.dart' as social_v2;
+import 'settings_v2/settings_v2.dart' as settings_v2;
 import '../widgets/ds/ds.dart';
 
-class _Hifi {
+class Hifi {
   static Widget homeDemo(BuildContext c)         => const _HomeReal();
   static Widget aiDecideDemo(BuildContext c)     => _AiDecideReal();
   static Widget cardStackDemo(BuildContext c)    => const _CardStackReal();
@@ -29,6 +31,329 @@ class _Hifi {
   static Widget voiceHaDemo(BuildContext c)      => _VoiceReal();
   static Widget premiumDemo(BuildContext c)      => _PremiumReal();
   static Widget profileDemo(BuildContext c)      => const _ProfileReal();
+  static Widget tiktokFeedDemo(BuildContext c)   => const _TikTokReal();
+  static Widget mealPlannerDemo(BuildContext c)  => const _MealPlannerReal();
+  static Widget groupVotingDemo(BuildContext c)  => const _GroupVotingReal();
+  static Widget notificationsDemo(BuildContext c)=> const _NotificationsReal();
+  static Widget lateNightDemo(BuildContext c)    => const _LateNightReal();
+  static Widget settingsDemo(BuildContext c)     => settings_v2.SettingsScreenV2(
+    userName: 'Bạn',
+    userEmail: 'bạn@hnag.app',
+    onSignOut: () async {
+      await AuthService.instance.signOut();
+      if (c.mounted) Navigator.of(c).popUntil((r) => r.isFirst);
+    },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// TIKTOK FEED — trending foods rendered as vertical video pages
+// ─────────────────────────────────────────────────────────────
+class _TikTokReal extends StatefulWidget {
+  const _TikTokReal();
+  @override
+  State<_TikTokReal> createState() => _TikTokRealState();
+}
+
+class _TikTokRealState extends State<_TikTokReal> {
+  final _api = HnagApi();
+  List<social_v2.TikTokVideoData>? _videos;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final trending = await _api.trendingFoods();
+    if (!mounted) return;
+    setState(() {
+      _videos = trending.take(8).map((f) => social_v2.TikTokVideoData(
+        id: (f['id'] as String?) ?? '',
+        author: (f['cuisine'] as String?) ?? 'hnag',
+        caption: ((f['description'] as String?) ?? (f['name_vi'] as String?) ?? '').length > 120
+            ? '${((f['description'] as String?) ?? (f['name_vi'] as String?) ?? '').substring(0, 120)}…'
+            : ((f['description'] as String?) ?? (f['name_vi'] as String?) ?? ''),
+        foodName: (f['name_vi'] as String?) ?? '',
+        foodSlug: _slugFromName(f['name_vi'] as String?),
+        likes: ((f['rating_count'] as int?) ?? 200) * 7,
+        comments: ((f['rating_count'] as int?) ?? 100),
+        shares: 42,
+        saves: 88,
+      )).toList();
+    });
+  }
+
+  String _slugFromName(String? name) {
+    final n = (name ?? '').toLowerCase();
+    if (n.contains('phở')) return 'pho';
+    if (n.contains('bún bò')) return 'bunbo';
+    if (n.contains('bún')) return 'bunch';
+    if (n.contains('cơm gà')) return 'comga';
+    if (n.contains('bánh mì')) return 'banhmi';
+    if (n.contains('lẩu')) return 'lau';
+    if (n.contains('gỏi')) return 'goicuon';
+    return 'pho';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_videos == null) {
+      return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.white)));
+    }
+    return social_v2.TikTokFeedScreen(
+      videos: _videos!,
+      onClose: () => Navigator.maybePop(context),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MEAL PLANNER — empty week, AI auto-fill via /ai/suggest
+// ─────────────────────────────────────────────────────────────
+class _MealPlannerReal extends StatefulWidget {
+  const _MealPlannerReal();
+  @override
+  State<_MealPlannerReal> createState() => _MealPlannerRealState();
+}
+
+class _MealPlannerRealState extends State<_MealPlannerReal> {
+  final _api = HnagApi();
+  final Map<String, Map<String, social_v2.PlannedMeal?>> _plan = {};
+
+  Future<void> _autoFill(Map<String, Map<String, social_v2.PlannedMeal?>> current) async {
+    final suggestions = await _api.aiSuggest(limit: 21);
+    if (!mounted) return;
+    int i = 0;
+    final next = <String, Map<String, social_v2.PlannedMeal?>>{};
+    for (final entry in current.entries) {
+      next[entry.key] = {};
+      for (final meal in entry.value.keys) {
+        if (i < suggestions.length) {
+          final s = suggestions[i++];
+          next[entry.key]![meal] = social_v2.PlannedMeal(
+            foodId: (s['id'] as String?) ?? '',
+            foodName: (s['name_vi'] as String?) ?? '',
+            foodSlug: 'pho',
+            calories: (s['avg_calories'] as int?) ?? 0,
+            priceVnd: (s['avg_price_vnd'] as int?) ?? 0,
+          );
+        }
+      }
+    }
+    setState(() {
+      _plan
+        ..clear()
+        ..addAll(next);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return social_v2.MealPlannerScreenV2(
+      plan: _plan,
+      onAutoFill: _autoFill,
+      onPickMeal: (_, __) async {
+        // For now pick from trending; could open a picker sheet in prod.
+        final t = await _api.trendingFoods();
+        if (t.isEmpty) return null;
+        final f = t.first;
+        return social_v2.PlannedMeal(
+          foodId: (f['id'] as String?) ?? '',
+          foodName: (f['name_vi'] as String?) ?? '',
+          foodSlug: 'pho',
+          calories: (f['avg_calories'] as int?) ?? 0,
+          priceVnd: (f['avg_price_vnd'] as int?) ?? 0,
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GROUP VOTING — demo group with realistic options
+// ─────────────────────────────────────────────────────────────
+class _GroupVotingReal extends StatefulWidget {
+  const _GroupVotingReal();
+  @override
+  State<_GroupVotingReal> createState() => _GroupVotingRealState();
+}
+
+class _GroupVotingRealState extends State<_GroupVotingReal> {
+  final _api = HnagApi();
+  List<social_v2.GroupOption>? _options;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final trending = await _api.trendingFoods();
+    if (!mounted) return;
+    setState(() {
+      _options = trending.take(4).toList().asMap().entries.map((e) {
+        final i = e.key;
+        final f = e.value;
+        return social_v2.GroupOption(
+          id: (f['id'] as String?) ?? 'opt-$i',
+          name: (f['name_vi'] as String?) ?? '',
+          foodSlug: 'pho',
+          priceVnd: (f['avg_price_vnd'] as int?) ?? 50000,
+          location: 'Q.3, TP.HCM',
+          voterAvatars: ['Minh', 'Linh', 'Khoa', 'Tâm'].sublist(0, [3, 2, 2, 1][i % 4]),
+        );
+      }).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_options == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    return social_v2.GroupVotingScreenV2(
+      groupName: 'Team lunch 🍜',
+      memberCount: 5,
+      userId: 'me',
+      options: _options!,
+      chat: const [
+        social_v2.ChatTurn(name: 'Minh', text: 'Chốt Phở Lý nhé anh em, gần văn phòng'),
+        social_v2.ChatTurn(name: 'Linh', text: 'Hôm qua ăn rồi, đổi món khác?'),
+        social_v2.ChatTurn(name: 'Bạn',  text: 'OK lẩu Thái cũng được', isMe: true),
+      ],
+      onSend: (text) => debugPrint('Group send: $text'),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// NOTIFICATIONS — feed from real AI + trending + streak
+// ─────────────────────────────────────────────────────────────
+class _NotificationsReal extends StatefulWidget {
+  const _NotificationsReal();
+  @override
+  State<_NotificationsReal> createState() => _NotificationsRealState();
+}
+
+class _NotificationsRealState extends State<_NotificationsReal> {
+  final _api = HnagApi();
+  List<social_v2.NotificationItem>? _items;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final now = DateTime.now();
+    final out = <social_v2.NotificationItem>[];
+    try {
+      final r = await _api.aiMoodSuggest('happy');
+      if (r.foods.isNotEmpty) {
+        final top = r.foods.first;
+        out.add(social_v2.NotificationItem(
+          id: 'ai-${top['id']}',
+          type: 'ai_suggest',
+          title: 'Hà gợi ý: ${top['name_vi']}',
+          body: r.theme.isNotEmpty ? r.theme : 'Món hợp tâm trạng bạn lúc này',
+          createdAt: now,
+        ));
+      }
+    } catch (_) {}
+    try {
+      final t = await _api.trendingFoods();
+      if (t.isNotEmpty) {
+        final top = t.first;
+        out.add(social_v2.NotificationItem(
+          id: 'trend-${top['id']}',
+          type: 'social_like',
+          title: '🔥 ${top['name_vi']} đang trending',
+          body: 'Trending score ${top['trending_score']} — ${top['rating_count']} reviews',
+          createdAt: now.subtract(const Duration(hours: 2)),
+        ));
+      }
+    } catch (_) {}
+    try {
+      final s = await _api.myStreak();
+      if (s != null) {
+        final daily = (s['daily_decide'] as int?) ?? 0;
+        if (daily > 0) {
+          out.add(social_v2.NotificationItem(
+            id: 'streak-$daily',
+            type: 'streak',
+            title: '🔥 Streak $daily ngày!',
+            body: 'Best: ${s['best_decide'] ?? daily} ngày',
+            createdAt: now.subtract(const Duration(hours: 8)),
+          ));
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _items = out);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_items == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    return social_v2.NotificationsScreenV2(
+      items: _items!,
+      onMarkAllRead: () {
+        setState(() {
+          _items = _items!.map((n) => social_v2.NotificationItem(
+            id: n.id, type: n.type, title: n.title, body: n.body, createdAt: n.createdAt, read: true,
+          )).toList();
+        });
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// LATE NIGHT — filter trending for 24h-like items
+// ─────────────────────────────────────────────────────────────
+class _LateNightReal extends StatefulWidget {
+  const _LateNightReal();
+  @override
+  State<_LateNightReal> createState() => _LateNightRealState();
+}
+
+class _LateNightRealState extends State<_LateNightReal> {
+  final _api = HnagApi();
+  List<social_v2.LateNightItem>? _items;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final trending = await _api.trendingFoods();
+    if (!mounted) return;
+    setState(() {
+      _items = trending.take(5).map((f) => social_v2.LateNightItem(
+        id: (f['id'] as String?) ?? '',
+        name: (f['name_vi'] as String?) ?? '',
+        foodSlug: 'pho',
+        priceVnd: (f['avg_price_vnd'] as int?) ?? 50000,
+        etaText: '~ ${15 + (f['rating_count'] as int? ?? 10) % 30} phút',
+        tag: 'Còn mở · 24h',
+      )).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_items == null) {
+      return const Scaffold(backgroundColor: Color(0xFF1A1A40), body: Center(child: CircularProgressIndicator(color: Colors.white)));
+    }
+    return social_v2.LateNightScreen(items: _items!);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
