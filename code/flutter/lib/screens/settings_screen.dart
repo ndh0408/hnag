@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '_showcase/showcase_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Future<void> Function()? onSignOut;
@@ -82,6 +83,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _section('Khác', [
           _item(Icons.feedback_outlined, 'Gửi phản hồi'),
           _item(Icons.info_outline, 'Về HNAG', subtitle: 'Version 1.0.0+1'),
+          _item(Icons.palette_outlined, '🎨 Design Showcase',
+              subtitle: 'Xem tất cả primitives hi-fi (dev)',
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const ShowcaseScreen(),
+              ))),
           _item(Icons.logout, 'Đăng xuất', danger: true, onTap: () async {
             final ok = await showDialog<bool>(
               context: context,

@@ -3,19 +3,71 @@
 @tailwind utilities;
 
 @layer base {
+  /* Semantic tokens as CSS vars — bound to Tailwind `bg`, `text`, etc. */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 4%;
-    --muted: 240 5% 96%;
+    /* Light theme — values from design/tokens.jsx#lightT */
+    --bg:           251 250 247;  /* neutral.25  #FBFAF7 */
+    --bg-raised:    255 255 255;  /* neutral.0   #FFFFFF */
+    --bg-sunken:    247 245 241;  /* neutral.50  #F7F5F1 */
+    --bg-elev:      255 255 255;
+    --bg-muted:     239 236 229;  /* neutral.100 #EFECE5 */
+    --text:         20  18  15;   /* neutral.900 #14120F */
+    --text-muted:   90  85  75;   /* neutral.600 #5A554B */
+    --text-faint:   163 156 142;  /* neutral.400 #A39C8E */
+    --border:       226 222 213;  /* neutral.200 #E2DED5 */
+    --border-strong: 201 195 182; /* neutral.300 #C9C3B6 */
+    --divider:      239 236 229;  /* neutral.100 */
+
+    /* Legacy shadcn vars (HSL) kept for any pre-existing components */
+    --background:   0 0% 100%;
+    --foreground:   240 10% 4%;
+    --muted:        240 5% 96%;
     --muted-foreground: 240 4% 46%;
-    --border: 240 6% 90%;
   }
+
   .dark {
-    --background: 240 10% 4%;
-    --foreground: 0 0% 98%;
-    --muted: 240 4% 12%;
+    /* Dark theme — values from design/tokens.jsx#darkT */
+    --bg:           14  11  8;    /* neutral.950 */
+    --bg-raised:    20  18  15;   /* neutral.900 */
+    --bg-sunken:    0 0 0;
+    --bg-elev:      26  24  20;   /* neutral.850 */
+    --bg-muted:     26  24  20;
+    --text:         245 242 236;  /* #F5F2EC */
+    --text-muted:   163 156 142;
+    --text-faint:   90 85 75;
+    --border:       40 40 40;
+    --border-strong: 60 60 60;
+    --divider:      24 24 24;
+
+    --background:   240 10% 4%;
+    --foreground:   0 0% 98%;
+    --muted:        240 4% 12%;
     --muted-foreground: 240 5% 70%;
-    --border: 240 4% 18%;
   }
-  body { font-family: 'Be Vietnam Pro', system-ui, sans-serif; }
+
+  body {
+    background: rgb(var(--bg));
+    color:      rgb(var(--text));
+    font-family: 'Inter', 'Be Vietnam Pro', system-ui, sans-serif;
+    font-feature-settings: 'ss01', 'cv01';
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 { font-family: 'Urbanist', 'Inter', system-ui, sans-serif; }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
+
+  /* Glass blur */
+  .bg-glass {
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(20px) saturate(1.6);
+    -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  }
+  .dark .bg-glass {
+    background: rgba(20,18,15,0.65);
+  }
 }

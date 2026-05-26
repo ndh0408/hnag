@@ -7,7 +7,6 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Brand ramp 50..950
         brand: palette.brand,
         chili: palette.chili,
         turmeric: palette.turmeric,
@@ -15,8 +14,6 @@ const config: Config = {
         ai: palette.ai,
         info: palette.info,
         neutral: palette.neutral,
-
-        // Semantic — bound to CSS vars (set in globals.css per theme)
         bg:           'rgb(var(--bg) / <alpha-value>)',
         bgRaised:     'rgb(var(--bg-raised) / <alpha-value>)',
         bgSunken:     'rgb(var(--bg-sunken) / <alpha-value>)',
@@ -28,17 +25,9 @@ const config: Config = {
         borderc:      'rgb(var(--border) / <alpha-value>)',
         borderStrong: 'rgb(var(--border-strong) / <alpha-value>)',
         divider:      'rgb(var(--divider) / <alpha-value>)',
-
-        // Keep legacy aliases used elsewhere
-        background: 'rgb(var(--bg) / <alpha-value>)',
-        foreground: 'rgb(var(--text) / <alpha-value>)',
-        primary:    { DEFAULT: palette.brand[500], foreground: '#FFFFFF' },
-        muted:      { DEFAULT: 'rgb(var(--bg-muted) / <alpha-value>)', foreground: 'rgb(var(--text-muted) / <alpha-value>)' },
-        border:     'rgb(var(--border) / <alpha-value>)',
-        ring:       palette.brand[500],
-        success:    palette.basil[500],
-        warning:    palette.turmeric[500],
-        danger:     palette.chili[500],
+        success:      palette.basil[500],
+        warning:      palette.turmeric[500],
+        danger:       palette.chili[500],
       },
       fontFamily: {
         sans:    ['Inter', 'system-ui', 'sans-serif'],
@@ -48,12 +37,8 @@ const config: Config = {
       spacing,
       borderRadius: radius,
       boxShadow: {
-        s1:     shadows[1],
-        s2:     shadows[2],
-        s3:     shadows[3],
-        s4:     shadows[4],
-        glow:   shadows.glow,
-        glowAi: shadows.glowAi,
+        s1: shadows[1], s2: shadows[2], s3: shadows[3], s4: shadows[4],
+        glow: shadows.glow, glowAi: shadows.glowAi,
       },
       backgroundImage: {
         'gradient-brand':   gradients.brand,
@@ -64,11 +49,6 @@ const config: Config = {
         'gradient-morning': gradients.morning,
         'gradient-basil':   gradients.basil,
         'gradient-aurora':  gradients.aurora,
-      },
-      transitionTimingFunction: {
-        spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
-        out:    'cubic-bezier(0.16, 1, 0.3, 1)',
-        'in-out':'cubic-bezier(0.65, 0, 0.35, 1)',
       },
     },
   },
