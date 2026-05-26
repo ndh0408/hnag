@@ -22,16 +22,21 @@ Health: http://localhost:4000/health
 
 | Module | Path | Responsibility |
 |--------|------|----------------|
-| Auth | `modules/auth` | Phone OTP, JWT, refresh tokens |
-| Users | `modules/users` | Profile, follows |
-| AI | `modules/ai` | Suggest, feedback, mood, viral-link |
-| Foods | `modules/foods` | Food catalog |
-| Restaurants | `modules/restaurants` | Nearby, detail, menu, claims |
-| Groups | `modules/groups` | Group voting (with realtime) |
-| Orders | `modules/orders` | Delivery aggregator intent |
-| Notifications | `modules/notifications` | Push + center |
-| Realtime | `modules/realtime` | Socket.io gateway |
-| Subscriptions | `modules/subscriptions` | HNAG+ checkout |
+| Auth | `modules/auth` | Email OTP, Phone OTP, Apple SSO, JWT, refresh tokens |
+| Users | `modules/users` | Profile, saves, follows, preferences |
+| AI | `modules/ai` | Suggest (public + authed), feedback, mood, fridge-recipes |
+| Foods | `modules/foods` | Catalog + trending + detail + restaurants-serving |
+| Restaurants | `modules/restaurants` | Nearby (PostGIS), detail, menu, **reviews** |
+| Posts | `modules/posts` | TikTok feed, like, **comments (hydrated author)**, stories |
+| Groups | `modules/groups` | Group voting + realtime WS (`group.poll.updated`) |
+| Orders | `modules/orders` | Partner deeplink intent, history, **status updates with WS broadcast** |
+| Couple | `modules/couple` | Invite, accept, shared taste, memory book |
+| Challenges | `modules/challenges` | Quests, achievements, leaderboard |
+| Notifications | `modules/notifications` | Push + center + preferences |
+| Realtime | `modules/realtime` | Socket.io gateway (JWT auth + room helpers) |
+| Subscription | `modules/subscription` | HNAG+ checkout (VietQR / promo / SePay webhook with HMAC) |
+| Meal | `modules/meal` | Weekly meal plan + grocery export |
+| Boost | `modules/boost` | Restaurant boost campaigns |
 | Health | `modules/health` | DB + Redis liveness |
 
 ## Architecture highlights
@@ -43,6 +48,25 @@ Health: http://localhost:4000/health
 - **Prisma** as ORM, with raw SQL for PostGIS spatial queries
 - **OpenAI** integration via the `LlmReasonService` (batched + cached)
 - **GraphQL admin endpoint** at `/graphql` using `code/graphql/admin_schema.graphql`
+
+## Security hardening (2026-05 audit)
+
+| Issue | Status |
+|---|---|
+| OTP `devCode` leak in response body | **FIXED** — `sendEmail/sendPhone` returns `{}` always, code logged server-side only |
+| Brute-force OTP | **FIXED** — 5 attempts/code lock; 5 sends/hour rate limit per email |
+| SePay payment webhook forgery | **FIXED** — mandatory `SEPAY_WEBHOOK_TOKEN`, memo matching is subscription-id UUID prefix (collision-proof), amount exact-or-overpay only |
+| Refresh-token reuse | **FIXED** — reuse detection revokes whole chain |
+| Apple SSO signature verification | ⚠️ Partial — JWT decode only; signature verify against `appleid.apple.com/auth/keys` is next iter |
+| Partner webhook handlers (Shopee/Grab/Baemin status updates) | ⚠️ Missing — currently `/v1/orders/:id/status` is dev/QA-only (JWT-guarded, owner-only) |
+
+## Real-data seed (`prisma/seed-social.sql`)
+
+Idempotent. Inserts 8 real `posts` referencing real `foods` + `users`, 6 food `reviews`, 6 restaurant `reviews` — so TikTok feed, comments, Profile Reviews, Restaurant Reviews tabs all show real data. Tagged with `'seeded'` for safe re-run.
+
+```bash
+docker exec hnag-postgres psql -U hnag -d hnag -f /tmp/seed-social.sql
+```
 
 ## AI Suggestion Pipeline
 

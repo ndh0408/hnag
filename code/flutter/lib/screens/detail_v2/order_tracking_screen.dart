@@ -1,15 +1,26 @@
-// OrderTrackingScreen — status timeline + driver info + ETA. WebSocket
-// subscribe hook is left as a callback (Phase 11 wires backend WS).
+// OrderTrackingScreen — status timeline + driver info + ETA, wired to
+// backend WebSocket for live `order:update` events.
 
 import 'package:flutter/material.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
 
+import '../../api/auth_service.dart';
 import '../../design/tokens.dart';
 import '../../design/theme.dart';
 import '../../widgets/ds/ds.dart';
 
 enum OrderStage { placed, cooking, picking, delivering, done }
 
-class OrderTrackingScreen extends StatelessWidget {
+OrderStage _stageFromString(String? s) => switch (s) {
+  'placed' || 'new' || 'intent' => OrderStage.placed,
+  'cooking' || 'preparing'      => OrderStage.cooking,
+  'picking' || 'ready'          => OrderStage.picking,
+  'delivering' || 'shipping'    => OrderStage.delivering,
+  'done' || 'delivered'         => OrderStage.done,
+  _                              => OrderStage.placed,
+};
+
+class OrderTrackingScreen extends StatefulWidget {
   final String orderId;
   final String restaurantName;
   final OrderStage stage;
@@ -18,6 +29,7 @@ class OrderTrackingScreen extends StatelessWidget {
   final String? driverPhone;
   final VoidCallback? onCallDriver;
   final VoidCallback? onCancel;
+  final VoidCallback? onChatDriver;
 
   const OrderTrackingScreen({
     super.key,
@@ -29,7 +41,58 @@ class OrderTrackingScreen extends StatelessWidget {
     this.driverPhone,
     this.onCallDriver,
     this.onCancel,
+    this.onChatDriver,
   });
+
+  @override
+  State<OrderTrackingScreen> createState() => _OrderTrackingScreenState();
+}
+
+class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
+  late OrderStage _stage;
+  late String _eta;
+  io.Socket? _socket;
+
+  @override
+  void initState() {
+    super.initState();
+    _stage = widget.stage;
+    _eta = widget.etaText;
+    _connectSocket();
+  }
+
+  void _connectSocket() {
+    final token = AuthService.instance.accessToken;
+    if (token == null) return;
+    _socket = io.io(
+      'wss://api.tothanhthuy.cloud',
+      io.OptionBuilder()
+          .setTransports(['websocket'])
+          .disableAutoConnect()
+          .setAuth({'token': token})
+          .build(),
+    );
+    _socket!.onConnect((_) {
+      // user:{userId} room is auto-joined by RealtimeGateway on JWT decode.
+      // No explicit subscribe needed; just listen for events.
+    });
+    _socket!.on('order:update', (data) {
+      if (!mounted || data is! Map) return;
+      // Only react to events for THIS order id.
+      if (data['orderId'] != widget.orderId) return;
+      setState(() {
+        _stage = _stageFromString(data['status'] as String?);
+        if (data['eta'] is String) _eta = data['eta'] as String;
+      });
+    });
+    _socket!.connect();
+  }
+
+  @override
+  void dispose() {
+    _socket?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,12 +103,12 @@ class OrderTrackingScreen extends StatelessWidget {
         return Scaffold(
           backgroundColor: t.bg,
           appBar: HnagAppBar(
-            title: 'Đơn #${orderId.substring(0, 6)}',
-            subtitle: restaurantName,
+            title: 'Đơn #${widget.orderId.substring(0, widget.orderId.length.clamp(0, 6))}',
+            subtitle: widget.restaurantName,
             leading: HnagIconButton(icon: 'chevL', onPressed: () => Navigator.maybePop(context)),
             actions: [
-              if (stage.index < OrderStage.delivering.index && onCancel != null)
-                HnagButton(label: 'Huỷ', variant: BtnVariant.ghost, size: BtnSize.sm, onPressed: onCancel),
+              if (_stage.index < OrderStage.delivering.index && widget.onCancel != null)
+                HnagButton(label: 'Huỷ', variant: BtnVariant.ghost, size: BtnSize.sm, onPressed: widget.onCancel),
             ],
           ),
           body: ListView(
@@ -61,12 +124,12 @@ class OrderTrackingScreen extends StatelessWidget {
                     const HnagBadge(label: 'ĐANG TRACKING', variant: BadgeVariant.glass, icon: 'package'),
                     const SizedBox(height: 12),
                     Text(
-                      etaText,
+                      _eta,
                       style: HnagType.d2.copyWith(color: Colors.white, fontFamily: HnagFonts.display),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      _stageLabel(stage),
+                      _stageLabel(_stage),
                       style: HnagType.bodyLg.copyWith(color: Colors.white.withOpacity(0.85), fontFamily: HnagFonts.body),
                     ),
                   ],
@@ -77,24 +140,24 @@ class OrderTrackingScreen extends StatelessWidget {
               // Timeline
               Text('TIẾN ĐỘ', style: HnagType.caps.copyWith(color: t.textMuted, fontFamily: HnagFonts.body)),
               const SizedBox(height: 12),
-              _Timeline(stage: stage),
+              _Timeline(stage: _stage),
 
               const SizedBox(height: 20),
               // Driver
-              if (driverName != null) ...[
+              if (widget.driverName != null) ...[
                 Text('SHIPPER', style: HnagType.caps.copyWith(color: t.textMuted, fontFamily: HnagFonts.body)),
                 const SizedBox(height: 8),
                 HnagCard(
                   padding: const EdgeInsets.all(14),
                   child: Row(
                     children: [
-                      HnagAvatar(name: driverName!, size: 48, status: HnagStatus.online),
+                      HnagAvatar(name: widget.driverName!, size: 48, status: HnagStatus.online),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(driverName!,
+                            Text(widget.driverName!,
                               style: HnagType.h4.copyWith(color: t.text, fontFamily: HnagFonts.display),
                             ),
                             const SizedBox(height: 2),
@@ -108,9 +171,14 @@ class OrderTrackingScreen extends StatelessWidget {
                           ],
                         ),
                       ),
-                      HnagIconButton(icon: 'phone', variant: IconBtnVariant.soft, onPressed: onCallDriver),
+                      HnagIconButton(icon: 'phone', variant: IconBtnVariant.soft, onPressed: widget.onCallDriver),
                       const SizedBox(width: 6),
-                      HnagIconButton(icon: 'chat', variant: IconBtnVariant.soft, onPressed: () {}),
+                      HnagIconButton(icon: 'chat', variant: IconBtnVariant.soft, onPressed: widget.onChatDriver ?? () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('💬 Chat shipper sẽ mở Zalo/Telegram khi đối tác hỗ trợ'),
+                          duration: Duration(seconds: 3),
+                        ));
+                      }),
                     ],
                   ),
                 ),

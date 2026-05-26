@@ -12,9 +12,13 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../widgets/live_cooking.dart';
 import 'fridge_scan_screen.dart';
+import 'couple_mode_screen.dart';
+import 'random_wheel_screen.dart';
+import 'nearby_restaurants_screen.dart';
 
 import '../api/hnag_api.dart';
 import '../api/auth_service.dart';
@@ -27,6 +31,23 @@ import 'profile_v2/profile_v2.dart' as profile_v2;
 import 'social_v2/social_v2.dart' as social_v2;
 import 'settings_v2/settings_v2.dart' as settings_v2;
 import '../widgets/ds/ds.dart';
+
+/// Safe casts — Prisma serializes Decimal/BigInt as String, and JSON might
+/// vary integer vs double for the same field. Use these instead of raw casts.
+int? _asInt(dynamic v) {
+  if (v == null) return null;
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  if (v is String) return int.tryParse(v) ?? double.tryParse(v)?.toInt();
+  return null;
+}
+double? _asDouble(dynamic v) {
+  if (v == null) return null;
+  if (v is double) return v;
+  if (v is num) return v.toDouble();
+  if (v is String) return double.tryParse(v);
+  return null;
+}
 
 class Hifi {
   static Widget homeDemo(BuildContext c)         => const _HomeReal();
@@ -92,10 +113,38 @@ class _TikTokRealState extends State<_TikTokReal> {
   }
 
   Future<void> _load() async {
-    final trending = await _api.trendingFoods();
-    if (!mounted) return;
-    setState(() {
-      _videos = trending.take(8).map((f) => social_v2.TikTokVideoData(
+    // Prefer real posts so like/comment/save hit real `posts` rows. Fall back
+    // to trending foods only when there are no posts yet (early-stage app).
+    List<social_v2.TikTokVideoData> rows = [];
+    try {
+      final posts = await _api.feedPosts(tab: 'trending', page: 1);
+      if (posts.isNotEmpty) {
+        rows = posts.take(8).map((p) {
+          final user = (p['users'] is Map ? p['users'] as Map : const {});
+          final author = (user['username'] as String?) ?? (user['display_name'] as String?) ?? 'hnag';
+          final caption = (p['caption'] as String?) ?? '';
+          final foodName = (p['foods'] is Map ? ((p['foods'] as Map)['name_vi'] as String?) : null) ?? caption;
+          return social_v2.TikTokVideoData(
+            id: (p['id'] as String?) ?? '',
+            author: author,
+            authorAvatarUrl: user['avatar_url'] as String?,
+            caption: caption.length > 120 ? '${caption.substring(0, 120)}…' : caption,
+            foodName: foodName,
+            foodSlug: _slugFromName(foodName),
+            likes: _asInt(p['like_count']) ?? 0,
+            comments: _asInt(p['comment_count']) ?? 0,
+            shares: _asInt(p['share_count']) ?? 0,
+            saves: _asInt(p['save_count']) ?? 0,
+          );
+        }).toList();
+      }
+    } catch (_) {}
+    if (rows.isEmpty) {
+      // No real posts → display trending foods as preview cards. Like still
+      // works (post_likes has no FK in seed data), but comment will degrade
+      // gracefully via the CommentsSheet's "post not yet" notice.
+      final trending = await _api.trendingFoods();
+      rows = trending.take(8).map((f) => social_v2.TikTokVideoData(
         id: (f['id'] as String?) ?? '',
         author: (f['cuisine'] as String?) ?? 'hnag',
         caption: ((f['description'] as String?) ?? (f['name_vi'] as String?) ?? '').length > 120
@@ -103,12 +152,14 @@ class _TikTokRealState extends State<_TikTokReal> {
             : ((f['description'] as String?) ?? (f['name_vi'] as String?) ?? ''),
         foodName: (f['name_vi'] as String?) ?? '',
         foodSlug: _slugFromName(f['name_vi'] as String?),
-        likes: ((f['rating_count'] as int?) ?? 200) * 7,
-        comments: ((f['rating_count'] as int?) ?? 100),
+        likes: (_asInt(f['rating_count']) ?? 200) * 7,
+        comments: (_asInt(f['rating_count']) ?? 100),
         shares: 42,
         saves: 88,
       )).toList();
-    });
+    }
+    if (!mounted) return;
+    setState(() => _videos = rows);
   }
 
   String _slugFromName(String? name) {
@@ -138,18 +189,17 @@ class _TikTokRealState extends State<_TikTokReal> {
           Share.share('${v.foodName} trên HNAG — https://tothanhthuy.cloud/post/${v.id}');
         }
       },
-      onComment: (v) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Comments — coming soon'),
-          duration: Duration(seconds: 2),
-        ));
+      onComment: (v) async {
+        await social_v2.CommentsSheet.show(context, v.id, initialCount: v.comments);
       },
       onSave: (v) async {
-        // Save the underlying food (foodSlug is name; need foodId from extra)
-        // For now, share post intent — comments/save full backend in next iter.
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Đã lưu'),
-          duration: Duration(seconds: 2),
+        // Real: persist save to backend (food saves list). v.id IS the foodId
+        // since this feed is mapped from /v1/foods/trending.
+        final ok = await _api.addSave(v.id);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ok ? '⭐ Đã lưu vào Yêu thích' : 'Không lưu được, thử lại'),
+          duration: const Duration(seconds: 2),
         ));
       },
     );
@@ -183,8 +233,8 @@ class _MealPlannerRealState extends State<_MealPlannerReal> {
             foodId: (s['id'] as String?) ?? '',
             foodName: (s['name_vi'] as String?) ?? '',
             foodSlug: 'pho',
-            calories: (s['avg_calories'] as int?) ?? 0,
-            priceVnd: (s['avg_price_vnd'] as int?) ?? 0,
+            calories: _asInt(s['avg_calories']) ?? 0,
+            priceVnd: _asInt(s['avg_price_vnd']) ?? 0,
           );
         }
       }
@@ -210,8 +260,8 @@ class _MealPlannerRealState extends State<_MealPlannerReal> {
           foodId: (f['id'] as String?) ?? '',
           foodName: (f['name_vi'] as String?) ?? '',
           foodSlug: 'pho',
-          calories: (f['avg_calories'] as int?) ?? 0,
-          priceVnd: (f['avg_price_vnd'] as int?) ?? 0,
+          calories: _asInt(f['avg_calories']) ?? 0,
+          priceVnd: _asInt(f['avg_price_vnd']) ?? 0,
         );
       },
     );
@@ -251,13 +301,13 @@ class _SearchReal extends StatelessWidget {
               name: (detail['name_vi'] as String?) ?? '',
               imageUrl: detail['primary_image'] as String?,
               foodSlug: 'pho',
-              rating: ((detail['rating_avg'] as num?) ?? 4.5).toDouble(),
-              reviewCount: (detail['rating_count'] as int?) ?? 0,
+              rating: ((_asDouble(detail['rating_avg'])) ?? 4.5).toDouble(),
+              reviewCount: _asInt(detail['rating_count']) ?? 0,
               flavorTags: ((detail['flavor_tags'] as List?) ?? const []).cast<String>().take(2).toList(),
               region: (detail['region'] as String?) ?? 'Việt Nam',
-              priceVnd: (detail['avg_price_vnd'] as int?) ?? 0,
-              calories: (detail['avg_calories'] as int?) ?? 0,
-              prepTimeMin: (detail['cook_time_min'] as int?) ?? 30,
+              priceVnd: _asInt(detail['avg_price_vnd']) ?? 0,
+              calories: _asInt(detail['avg_calories']) ?? 0,
+              prepTimeMin: _asInt(detail['cook_time_min']) ?? 30,
               macroLabel: 'High protein',
               hashtags: ((detail['mood_tags'] as List?) ?? const []).cast<String>().take(6).toList(),
               aiReason: (detail['description'] as String?) ?? '',
@@ -283,31 +333,109 @@ class _GroupVotingReal extends StatefulWidget {
 
 class _GroupVotingRealState extends State<_GroupVotingReal> {
   final _api = HnagApi();
+  io.Socket? _socket;
   List<social_v2.GroupOption>? _options;
+  List<int>? _tally;
+  String? _groupId;
+  String? _pollId;
+  String _groupName = 'Đang tải…';
+  String _userId = 'me';
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _bootstrap();
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    _socket?.dispose();
+    super.dispose();
+  }
+
+  /// Real flow: ensure a group exists for the user (auto-create if first time),
+  /// fetch trending foods as options, create a fresh poll, subscribe to the
+  /// group's WS room for live tally updates from other voters.
+  Future<void> _bootstrap() async {
+    _userId = AuthService.instance.currentUser?.id ?? 'me';
+
+    var groups = await _api.myGroups();
+    Map<String, dynamic>? group;
+    if (groups.isEmpty) {
+      group = await _api.createGroup('Team lunch 🍜');
+    } else {
+      group = groups.first;
+    }
+    if (group == null || !mounted) return;
+    _groupId = group['id'] as String?;
+    _groupName = (group['name'] as String?) ?? 'Team lunch';
+
+    // Trending foods → poll options
     final trending = await _api.trendingFoods();
     if (!mounted) return;
+    final picks = trending.take(4).toList();
+    final foodIds = picks.map((f) => f['id'] as String).toList();
+
+    final poll = await _api.createPoll(_groupId!, foodIds, closesInMinutes: 30);
+    _pollId = poll?['id'] as String?;
+
+    final opts = picks.asMap().entries.map((e) {
+      final i = e.key;
+      final f = e.value;
+      // Use the cuisine/region tag from the food itself rather than a hardcoded
+      // address — Q.3 was just a placeholder.
+      final region = (f['region'] as String?) ?? (f['cuisine'] as String?) ?? 'Việt Nam';
+      return social_v2.GroupOption(
+        id: i.toString(), // optionIdx is what backend expects on vote
+        name: (f['name_vi'] as String?) ?? '',
+        imageUrl: f['primary_image'] as String?,
+        foodSlug: 'pho',
+        priceVnd: _asInt(f['avg_price_vnd']) ?? 50000,
+        location: region,
+        voterAvatars: const [],
+      );
+    }).toList();
+
+    if (!mounted) return;
     setState(() {
-      _options = trending.take(4).toList().asMap().entries.map((e) {
-        final i = e.key;
-        final f = e.value;
-        return social_v2.GroupOption(
-          id: (f['id'] as String?) ?? 'opt-$i',
-          name: (f['name_vi'] as String?) ?? '',
-          foodSlug: 'pho',
-          priceVnd: (f['avg_price_vnd'] as int?) ?? 50000,
-          location: 'Q.3, TP.HCM',
-          voterAvatars: ['Minh', 'Linh', 'Khoa', 'Tâm'].sublist(0, [3, 2, 2, 1][i % 4]),
-        );
-      }).toList();
+      _options = opts;
+      _tally = List<int>.filled(opts.length, 0);
     });
+
+    _connectSocket();
+  }
+
+  void _connectSocket() {
+    final token = AuthService.instance.accessToken;
+    if (token == null || _groupId == null) return;
+    _socket = io.io(
+      'wss://api.tothanhthuy.cloud',
+      io.OptionBuilder()
+          .setTransports(['websocket'])
+          .disableAutoConnect()
+          .setAuth({'token': token})
+          .build(),
+    );
+    _socket!.onConnect((_) {
+      _socket!.emitWithAck('subscribe:group', {'groupId': _groupId}, ack: (resp) {
+        debugPrint('subscribe:group ack=$resp');
+      });
+    });
+    _socket!.on('group.poll.updated', (data) {
+      if (!mounted || data is! Map) return;
+      if (data['pollId'] != _pollId) return;
+      final t = (data['tally'] as List?)?.cast<int>();
+      if (t != null) setState(() => _tally = t);
+    });
+    _socket!.connect();
+  }
+
+  Future<void> _vote(String optionIdxStr) async {
+    if (_groupId == null || _pollId == null) return;
+    final idx = int.tryParse(optionIdxStr);
+    if (idx == null) return;
+    final newTally = await _api.votePoll(_groupId!, _pollId!, idx);
+    if (newTally != null && mounted) setState(() => _tally = newTally);
   }
 
   @override
@@ -315,17 +443,60 @@ class _GroupVotingRealState extends State<_GroupVotingReal> {
     if (_options == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
     }
+    // Bake tally counts into voterAvatars (simple "N người" badge via repeat).
+    final tallyOpts = List.generate(_options!.length, (i) {
+      final o = _options![i];
+      final n = (_tally != null && i < _tally!.length) ? _tally![i] : 0;
+      return social_v2.GroupOption(
+        id: o.id, name: o.name, imageUrl: o.imageUrl, foodSlug: o.foodSlug,
+        priceVnd: o.priceVnd, location: o.location, proposerName: o.proposerName,
+        voterAvatars: List<String>.filled(n, 'V'),
+      );
+    });
     return social_v2.GroupVotingScreenV2(
-      groupName: 'Team lunch 🍜',
-      memberCount: 5,
-      userId: 'me',
-      options: _options!,
+      groupName: _groupName,
+      memberCount: 1,
+      userId: _userId,
+      options: tallyOpts,
       chat: const [
-        social_v2.ChatTurn(name: 'Minh', text: 'Chốt Phở Lý nhé anh em, gần văn phòng'),
-        social_v2.ChatTurn(name: 'Linh', text: 'Hôm qua ăn rồi, đổi món khác?'),
-        social_v2.ChatTurn(name: 'Bạn',  text: 'OK lẩu Thái cũng được', isMe: true),
+        social_v2.ChatTurn(name: 'Hà', text: 'Mình chọn món hot tuần này nha — vote thoải mái!'),
       ],
-      onSend: (text) => debugPrint('Group send: $text'),
+      onToggleVote: _vote,
+      onSend: (text) {
+        // Group chat backend doesn't exist yet — surface that to user instead
+        // of silent no-op so the send button still feels responsive.
+        if (text.trim().isEmpty) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('💬 Chat nhóm đang build — vote là cách nhanh nhất rồi 😉'),
+          duration: Duration(seconds: 2),
+        ));
+      },
+      onReveal: _pollId == null ? null : () async {
+        // Real reveal: fetch /v1/groups/:id/polls/:pollId/result and show winner.
+        final result = await _api.pollResult(_groupId!, _pollId!);
+        if (!context.mounted) return;
+        final winner = result?['winner'] as Map<String, dynamic>?;
+        final foodId = winner?['foodId'] as String?;
+        final tally = ((result?['tally'] as List?) ?? []).cast<int>();
+        final total = tally.fold<int>(0, (a, b) => a + b);
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('🎉 Kết quả'),
+            content: Text(total == 0
+                ? 'Chưa có ai vote 🥲'
+                : 'Món chiến thắng có ${tally.reduce((a, b) => a > b ? a : b)} vote / $total tổng vote.\n\nMở chi tiết món?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Đóng')),
+              if (foodId != null)
+                TextButton(onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => _FoodDetailRealById(foodId: foodId)));
+                }, child: const Text('Mở chi tiết')),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -381,7 +552,7 @@ class _NotificationsRealState extends State<_NotificationsReal> {
     try {
       final s = await _api.myStreak();
       if (s != null) {
-        final daily = (s['daily_decide'] as int?) ?? 0;
+        final daily = _asInt(s['daily_decide']) ?? 0;
         if (daily > 0) {
           out.add(social_v2.NotificationItem(
             id: 'streak-$daily',
@@ -409,6 +580,33 @@ class _NotificationsRealState extends State<_NotificationsReal> {
             id: n.id, type: n.type, title: n.title, body: n.body, createdAt: n.createdAt, read: true,
           )).toList();
         });
+      },
+      onTap: (item) {
+        // Route by notification type:
+        //   ai_suggest / trending → food detail (id encoded as foodId)
+        //   social_like → tiktok feed
+        //   streak → late night / profile
+        //   order_update → order tracking
+        setState(() {
+          // Mark as read locally
+          _items = _items!.map((n) => n.id == item.id
+              ? social_v2.NotificationItem(id: n.id, type: n.type, title: n.title, body: n.body, createdAt: n.createdAt, read: true)
+              : n).toList();
+        });
+        final type = item.type;
+        final id = item.id;
+        if (type == 'ai_suggest' || type == 'trending') {
+          final foodId = id.split('-').skip(1).join('-');
+          if (foodId.isNotEmpty) {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => _FoodDetailRealById(foodId: foodId)));
+          }
+        } else if (type == 'social_like' || type == 'social_comment' || type == 'follow') {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _TikTokReal()));
+        } else if (type == 'order_update') {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _OrderTrackingReal()));
+        } else if (type == 'streak' || type == 'badge') {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _ProfileReal()));
+        }
       },
     );
   }
@@ -441,8 +639,8 @@ class _LateNightRealState extends State<_LateNightReal> {
         id: (f['id'] as String?) ?? '',
         name: (f['name_vi'] as String?) ?? '',
         foodSlug: 'pho',
-        priceVnd: (f['avg_price_vnd'] as int?) ?? 50000,
-        etaText: '~ ${15 + (f['rating_count'] as int? ?? 10) % 30} phút',
+        priceVnd: _asInt(f['avg_price_vnd']) ?? 50000,
+        etaText: '~ ${15 + ((_asInt(f['rating_count']) ?? 10) % 30)} phút',
         tag: 'Còn mở · 24h',
       )).toList();
     });
@@ -513,20 +711,27 @@ class _HomeRealState extends State<_HomeReal> {
         );
       }
 
-      // 3. Trending nearby
+      // 3. Trending nearby (each card opens food detail)
       final trending = await _api.trendingFoods();
-      _trending = trending.take(6).map((f) => home_v2.NearbyPlace(
-        id: (f['id'] as String?) ?? '',
-        name: (f['name_vi'] as String?) ?? '',
-        rating: _ratingStr(f['rating_avg']),
-        price: _vnd(f['avg_price_vnd']),
-        distance: 'gần đây',
-        foodSlug: _slug(f),
-        imageUrl: f['primary_image'] as String?,
-        hot: ((f['trending_score'] as num?) ?? 0) > 50,
-      )).toList();
+      _trending = trending.take(6).map((f) {
+        final id = (f['id'] as String?) ?? '';
+        return home_v2.NearbyPlace(
+          id: id,
+          name: (f['name_vi'] as String?) ?? '',
+          rating: _ratingStr(f['rating_avg']),
+          price: _vnd(f['avg_price_vnd']),
+          distance: 'gần đây',
+          foodSlug: _slug(f),
+          imageUrl: f['primary_image'] as String?,
+          hot: ((_asDouble(f['trending_score'])) ?? 0) > 50,
+          onTap: id.isEmpty ? null : () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => _FoodDetailRealById(foodId: id),
+          )),
+        );
+      }).toList();
 
-      // 4. Stories from followed users (auth required — empty for guests)
+      // 4. Stories from followed users (auth required — empty for guests). Tap
+      // opens the TikTok-style feed since stories show people's recent food posts.
       try {
         final storyRows = await _api.storiesFeed();
         _stories = storyRows.take(8).map((row) {
@@ -537,11 +742,13 @@ class _HomeRealState extends State<_HomeReal> {
             avatarUrl: author['avatar_url'] as String?,
             mediaUrl: (row['media_poster'] as String?) ?? (row['media_url'] as String?),
             foodSlug: _slug(row.containsKey('foods') && row['foods'] is Map ? row['foods'] as Map<String, dynamic> : {'name_vi': name}),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _TikTokReal())),
           );
         }).toList();
       } catch (_) { _stories = const []; }
 
-      // 5. Friends activity via /v1/feed?tab=following (real posts from followees)
+      // 5. Friends activity via /v1/feed?tab=following (real posts from followees).
+      // Tap → opens the food the friend posted (or comments sheet if no food id).
       try {
         final follow = await _api.friendsActivity();
         _friends = follow.take(3).map((p) {
@@ -550,6 +757,8 @@ class _HomeRealState extends State<_HomeReal> {
           final type = (p['type'] as String?) ?? 'photo';
           final caption = (p['caption'] as String?) ?? '';
           final relTime = _relativeTime(p['created_at']);
+          final foodId = p['food_id'] as String?;
+          final postId = p['id'] as String?;
           return home_v2.FriendActivity(
             name: name,
             avatarUrl: u['avatar_url'] as String?,
@@ -557,35 +766,42 @@ class _HomeRealState extends State<_HomeReal> {
             time: relTime,
             emoji: type == 'video' ? '🍳' : (type == 'review' ? '⭐' : '🍜'),
             cooking: type == 'video',
+            onTap: foodId != null
+                ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _FoodDetailRealById(foodId: foodId)))
+                : (postId != null ? () => social_v2.CommentsSheet.show(context, postId) : null),
           );
         }).toList();
       } catch (_) { _friends = const []; }
 
-      // 6. TikTok feed via /v1/feed?tab=trending — real social posts (photo/video)
+      // 6. TikTok feed via /v1/feed?tab=trending — real social posts. Tap any
+      // tile → opens the full vertical video feed.
+      VoidCallback openFeed() => () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _TikTokReal()));
       try {
         final posts = await _api.feedPosts(tab: 'trending', page: 1);
         if (posts.isNotEmpty) {
           _tiktoks = posts.take(4).map((p) {
             return home_v2.TikTokVideo(
               name: (p['caption'] as String?) ?? '',
-              views: _shortCount((p['like_count'] as num?) ?? 0),
+              views: _shortCount((_asDouble(p['like_count'])) ?? 0),
               foodSlug: _slug(p.containsKey('foods') && p['foods'] is Map ? p['foods'] as Map<String, dynamic> : {'name_vi': (p['caption'] as String?) ?? ''}),
               videoUrl: p['media_url'] as String?,
+              onTap: openFeed(),
             );
           }).toList();
         } else {
-          // No social posts yet — fall back to trending foods so the grid isn't empty
           _tiktoks = trending.skip(2).take(2).map((f) => home_v2.TikTokVideo(
             name: (f['name_vi'] as String?) ?? '',
-            views: '${((f['rating_count'] as int?) ?? 1) * 10}',
+            views: '${(_asInt(f['rating_count']) ?? 1) * 10}',
             foodSlug: _slug(f),
+            onTap: openFeed(),
           )).toList();
         }
       } catch (_) {
         _tiktoks = trending.skip(2).take(2).map((f) => home_v2.TikTokVideo(
           name: (f['name_vi'] as String?) ?? '',
-          views: '${((f['rating_count'] as int?) ?? 1) * 10}',
+          views: '${(_asInt(f['rating_count']) ?? 1) * 10}',
           foodSlug: _slug(f),
+          onTap: openFeed(),
         )).toList();
       }
     } catch (e) {
@@ -661,6 +877,14 @@ class _HomeRealState extends State<_HomeReal> {
       friends: _friends,
       tiktoks: _tiktoks,
       onRefresh: _load,
+      onSearch: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.searchDemo(context))),
+      onNotifications: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _NotificationsReal())),
+      onHeroTap: () {
+        if (_hero == null) return;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => _FoodDetailRealById(foodId: _hero!.id),
+        ));
+      },
     );
   }
 }
@@ -707,7 +931,7 @@ class _AiDecideReal extends StatelessWidget {
                       return FridgeRecipe(
                         id: food['id'] as String? ?? '',
                         name: food['name_vi'] as String? ?? '',
-                        timeMin: food['cook_time_min'] as int? ?? 30,
+                        timeMin: _asInt(food['cook_time_min']) ?? 30,
                         uses: ((r['uses'] as List?) ?? []).cast<String>(),
                         missing: ((r['missing'] as List?) ?? []).cast<String>(),
                         tip: r['tip'] as String? ?? '',
@@ -746,18 +970,38 @@ class _AiDecideReal extends StatelessWidget {
           name: (s['name_vi'] as String?) ?? '',
           imageUrl: s['primary_image'] as String?,
           foodSlug: _slug(s),
-          price: '${(((s['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round()}k',
+          price: '${(((_asDouble(s['avg_price_vnd'])) ?? 0).toInt() / 1000).round()}k',
           calories: '${s['avg_calories'] ?? 0} cal',
           time: '${s['cook_time_min'] ?? 30} phút',
-          rating: ((s['rating_avg'] as num?) ?? 4.5).toStringAsFixed(1),
+          rating: ((_asDouble(s['rating_avg'])) ?? 4.5).toStringAsFixed(1),
           kind: 'order',
           kindLabel: 'Giao tận nơi',
           reason: (s['ai_reason'] as String?) ?? (s['description'] as String?) ?? 'Khớp ngân sách ${(budgetVnd / 1000).round()}k và mức đói ${(session.hunger / 10).round()}/10.',
         )).toList();
+        final sessionId = '00000000-0000-0000-0000-${DateTime.now().millisecondsSinceEpoch.toRadixString(16).padLeft(12, '0').substring(0, 12)}';
         Navigator.of(context).pushReplacement(MaterialPageRoute(
-          builder: (_) => home_v2.CardStackV2(
+          builder: (ctx2) => home_v2.CardStackV2(
             cards: cards,
-            onAction: (c, a) => debugPrint('CardStack: ${c.name} → $a'),
+            onAction: (c, a) {
+              final api = HnagApi();
+              unawaited(api.aiFeedback(
+                sessionId: sessionId,
+                foodId: c.id,
+                action: switch (a) {
+                  home_v2.CardSwipe.skip => 'skip',
+                  home_v2.CardSwipe.save || home_v2.CardSwipe.later => 'save',
+                  home_v2.CardSwipe.detail => 'view',
+                  home_v2.CardSwipe.reroll => 'skip',
+                },
+              ));
+              if (a == home_v2.CardSwipe.save || a == home_v2.CardSwipe.later) {
+                unawaited(api.addSave(c.id));
+              } else if (a == home_v2.CardSwipe.detail) {
+                Navigator.of(ctx2).push(MaterialPageRoute(
+                  builder: (_) => _FoodDetailRealById(foodId: c.id),
+                ));
+              }
+            },
           ),
         ));
       },
@@ -807,10 +1051,10 @@ class _CardStackRealState extends State<_CardStackReal> {
         name: (s['name_vi'] as String?) ?? '',
         imageUrl: s['primary_image'] as String?,
         foodSlug: _slug(s),
-        price: '${(((s['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round()}k',
+        price: '${(((_asDouble(s['avg_price_vnd'])) ?? 0).toInt() / 1000).round()}k',
         calories: '${s['avg_calories'] ?? 0} cal',
         time: '${s['cook_time_min'] ?? 30} phút',
-        rating: ((s['rating_avg'] as num?) ?? 4.5).toStringAsFixed(1),
+        rating: ((_asDouble(s['rating_avg'])) ?? 4.5).toStringAsFixed(1),
         kind: 'order',
         kindLabel: 'Giao tận nơi',
         reason: (s['ai_reason'] as String?) ?? (s['description'] as String?) ?? '',
@@ -844,22 +1088,46 @@ class _CardStackRealState extends State<_CardStackReal> {
       foodId: card.id,
       action: _swipeToAction(a),
     ));
-    if (a == home_v2.CardSwipe.skip) {
-      // Open the Why-skip sheet so user can give reason — recorded as well.
-      home_v2.WhySkipSheet.show(
-        context,
-        foodName: card.name,
-        onSubmit: (reason) async {
-          await _api.aiFeedback(
-            sessionId: _sessionId,
-            foodId: card.id,
-            action: 'skip',
-            reason: reason,
-          );
-        },
-      );
-    } else if (a == home_v2.CardSwipe.save) {
-      unawaited(_api.addSave(card.id));
+    switch (a) {
+      case home_v2.CardSwipe.skip:
+        home_v2.WhySkipSheet.show(
+          context,
+          foodName: card.name,
+          onSubmit: (reason) async {
+            await _api.aiFeedback(
+              sessionId: _sessionId,
+              foodId: card.id,
+              action: 'skip',
+              reason: reason,
+            );
+          },
+        );
+        break;
+      case home_v2.CardSwipe.save:
+        unawaited(_api.addSave(card.id));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('⭐ Đã lưu ${card.name}'),
+          duration: const Duration(seconds: 2),
+        ));
+        break;
+      case home_v2.CardSwipe.detail:
+        // Open the food detail to read recipe + restaurants.
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => _FoodDetailRealById(foodId: card.id),
+        ));
+        break;
+      case home_v2.CardSwipe.later:
+        unawaited(_api.addSave(card.id));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('🕒 Thêm vào "Để sau" — ${card.name}'),
+          duration: const Duration(seconds: 2),
+        ));
+        break;
+      case home_v2.CardSwipe.reroll:
+        // Re-fetch a fresh stack of suggestions.
+        setState(() => _cards = null);
+        _load();
+        break;
     }
   }
 
@@ -871,6 +1139,7 @@ class _CardStackRealState extends State<_CardStackReal> {
     return home_v2.CardStackV2(
       cards: _cards!,
       onAction: _onSwipe,
+      onRefreshStack: () { setState(() => _cards = null); _load(); },
     );
   }
 }
@@ -879,14 +1148,27 @@ class _CardStackRealState extends State<_CardStackReal> {
 // FOOD DETAIL v2 — uses first AI-suggested food, fetches /v1/foods/:id
 // ─────────────────────────────────────────────────────────────
 class _FoodDetailReal extends StatefulWidget {
-  const _FoodDetailReal();
+  /// When non-null, fetches THAT food's detail; otherwise loads first AI suggestion.
+  final String? foodId;
+  const _FoodDetailReal({this.foodId});
   @override
   State<_FoodDetailReal> createState() => _FoodDetailRealState();
+}
+
+/// Wrapper for `_FoodDetailReal` opened with an explicit foodId — keeps the
+/// call-site readable from CardStack / TikTok / Home story taps.
+class _FoodDetailRealById extends StatelessWidget {
+  final String foodId;
+  const _FoodDetailRealById({required this.foodId});
+  @override
+  Widget build(BuildContext context) => _FoodDetailReal(foodId: foodId);
 }
 
 class _FoodDetailRealState extends State<_FoodDetailReal> {
   final _api = HnagApi();
   detail_v2.FoodDetailDataV2? _food;
+  List<detail_v2.RestaurantBriefForFood>? _serving;
+  List<detail_v2.FoodPostV2>? _posts;
   String? _error;
 
   @override
@@ -897,17 +1179,54 @@ class _FoodDetailRealState extends State<_FoodDetailReal> {
 
   Future<void> _load() async {
     try {
-      final list = await _api.aiSuggest(limit: 1);
-      if (list.isEmpty) {
-        setState(() => _error = 'Không tải được món');
-        return;
+      String id;
+      if (widget.foodId != null) {
+        id = widget.foodId!;
+      } else {
+        final list = await _api.aiSuggest(limit: 1);
+        if (list.isEmpty) {
+          setState(() => _error = 'Không tải được món');
+          return;
+        }
+        id = list.first['id'] as String;
       }
-      final id = list.first['id'] as String;
       final detail = await _api.foodDetail(id);
       if (detail == null) {
         setState(() => _error = 'Không tải được chi tiết món');
         return;
       }
+      // Fetch in parallel: real posts about this food (Bài viết tab).
+      _api.feedPosts(tab: 'for_you', page: 1).then((rows) {
+        if (!mounted) return;
+        final filtered = rows.where((p) => p['food_id'] == id).take(20).map((p) {
+          final u = (p['users'] is Map ? p['users'] as Map : const {});
+          final created = p['created_at'] is String ? DateTime.tryParse(p['created_at'] as String) : null;
+          return detail_v2.FoodPostV2(
+            id: (p['id'] as String?) ?? '',
+            authorName: (u['display_name'] as String?) ?? (u['username'] as String?) ?? 'Foodie',
+            authorAvatarUrl: u['avatar_url'] as String?,
+            caption: (p['caption'] as String?) ?? '',
+            mediaUrl: (p['media_url'] as String?) ?? (p['media_poster'] as String?),
+            likeCount: _asInt(p['like_count']) ?? 0,
+            commentCount: _asInt(p['comment_count']) ?? 0,
+            createdAt: created,
+          );
+        }).toList();
+        setState(() => _posts = filtered);
+      });
+      // Fetch in parallel: real restaurants serving this food (Quán bán tab)
+      _api.restaurantsServingFood(id).then((rows) {
+        if (!mounted) return;
+        setState(() => _serving = rows.take(8).map((r) => detail_v2.RestaurantBriefForFood(
+          id: (r['id'] as String?) ?? '',
+          name: (r['name'] as String?) ?? '',
+          imageUrl: r['primary_image'] as String? ?? r['cover_image'] as String? ?? r['cover_url'] as String?,
+          rating: _asDouble(r['rating_avg']),
+          distanceM: _asInt(r['distance_m']),
+          priceVnd: _asInt(r['min_price_vnd']) ?? _asInt(detail['avg_price_vnd']) ?? 0,
+          address: r['address'] as String? ?? r['district'] as String?,
+        )).toList());
+      });
       final ings = <({String name, String qty})>[];
       final ingJson = detail['ingredients'];
       if (ingJson is List) {
@@ -937,18 +1256,18 @@ class _FoodDetailRealState extends State<_FoodDetailReal> {
         name: (detail['name_vi'] as String?) ?? '',
         imageUrl: detail['primary_image'] as String?,
         foodSlug: 'pho',
-        rating: ((detail['rating_avg'] as num?) ?? 4.5).toDouble(),
-        reviewCount: (detail['rating_count'] as int?) ?? 0,
+        rating: _asDouble(detail['rating_avg']) ?? 4.5,
+        reviewCount: _asInt(detail['rating_count']) ?? 0,
         flavorTags: ((detail['flavor_tags'] as List?) ?? const []).cast<String>().take(2).toList(),
         region: (detail['region'] as String?) ?? 'Việt Nam',
-        priceVnd: (detail['avg_price_vnd'] as int?) ?? 0,
-        calories: (detail['avg_calories'] as int?) ?? 0,
-        prepTimeMin: (detail['cook_time_min'] as int?) ?? 30,
+        priceVnd: _asInt(detail['avg_price_vnd']) ?? 0,
+        calories: _asInt(detail['avg_calories']) ?? 0,
+        prepTimeMin: _asInt(detail['cook_time_min']) ?? 30,
         macroLabel: 'High protein',
         hashtags: ((detail['mood_tags'] as List?) ?? const []).cast<String>().take(6).toList(),
         aiReason: (detail['description'] as String?) ?? '',
         ingredients: ings,
-        servings: (detail['servings'] as int?) ?? 4,
+        servings: _asInt(detail['servings']) ?? 4,
         steps: steps.take(3).toList(),
         totalSteps: steps.length,
       ));
@@ -970,15 +1289,34 @@ class _FoodDetailRealState extends State<_FoodDetailReal> {
     }
     return detail_v2.FoodDetailScreenV2(
       food: _food!,
+      restaurantsServing: _serving,
+      posts: _posts,
+      onTapPost: (p) => social_v2.CommentsSheet.show(context, p.id, initialCount: p.commentCount),
+      onTapRestaurant: (r) => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => _RestaurantDetailRealForId(restaurantId: r.id),
+      )),
       onSave: () => _api.addSave(_food!.id),
       onOrder: () async {
         // Real flow: backend creates an order intent → returns partner deep-link
         // (Grab/Shopee/BeFood). We launch it via url_launcher.
         final intent = await _api.createOrderIntent(foodId: _food!.id);
-        if (intent == null || !context.mounted) return;
+        if (!context.mounted) return;
+        if (intent == null) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Món này chưa có quán nào hỗ trợ giao gần bạn 🥲'),
+            duration: Duration(seconds: 3),
+          ));
+          return;
+        }
         final url = intent['deeplink'] as String?;
+        final orderId = intent['orderId'] as String?;
         if (url != null && url.isNotEmpty) {
           await launchUrlString(url, mode: LaunchMode.externalApplication);
+          if (context.mounted && orderId != null) {
+            Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _OrderTrackingReal(orderId: orderId, restaurantName: _food!.name),
+            ));
+          }
         }
       },
       onCook: () {
@@ -1016,14 +1354,26 @@ class _FoodDetailRealState extends State<_FoodDetailReal> {
 // RESTAURANT DETAIL v2 — wired to /v1/restaurants/nearby
 // ─────────────────────────────────────────────────────────────
 class _RestaurantDetailReal extends StatefulWidget {
-  const _RestaurantDetailReal();
+  /// When provided, fetches that exact restaurant. Otherwise picks the nearest.
+  final String? restaurantId;
+  const _RestaurantDetailReal({this.restaurantId});
   @override
   State<_RestaurantDetailReal> createState() => _RestaurantDetailRealState();
+}
+
+/// Alias used from food detail's Quán bán tab — keeps call sites readable.
+class _RestaurantDetailRealForId extends StatelessWidget {
+  final String restaurantId;
+  const _RestaurantDetailRealForId({required this.restaurantId});
+  @override
+  Widget build(BuildContext context) => _RestaurantDetailReal(restaurantId: restaurantId);
 }
 
 class _RestaurantDetailRealState extends State<_RestaurantDetailReal> {
   final _api = HnagApi();
   detail_v2.RestaurantDetailDataV2? _r;
+  Map<String, dynamic>? _lastDetail; // raw full detail for lat/lng/phone wiring
+  List<detail_v2.RestaurantReviewV2>? _reviews;
   String? _error;
 
   @override
@@ -1034,25 +1384,53 @@ class _RestaurantDetailRealState extends State<_RestaurantDetailReal> {
 
   Future<void> _load() async {
     try {
-      Position? pos;
-      try {
-        final perm = await Geolocator.checkPermission();
-        if (perm == LocationPermission.always || perm == LocationPermission.whileInUse) {
-          pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
+      Map<String, dynamic>? first;
+      if (widget.restaurantId != null) {
+        // Specific restaurant requested (e.g. from food detail's Quán bán tab).
+        final r = await _api.restaurantDetail(widget.restaurantId!);
+        if (r == null) {
+          setState(() => _error = 'Không tải được quán');
+          return;
         }
-      } catch (_) {}
-      // Fallback HCMC center
-      final lat = pos?.latitude ?? 10.7769;
-      final lng = pos?.longitude ?? 106.7009;
+        first = r;
+      } else {
+        Position? pos;
+        try {
+          final perm = await Geolocator.checkPermission();
+          if (perm == LocationPermission.always || perm == LocationPermission.whileInUse) {
+            pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
+          }
+        } catch (_) {}
+        final lat = pos?.latitude ?? 10.7769;
+        final lng = pos?.longitude ?? 106.7009;
 
-      final list = await _api.nearbyRestaurants(lat: lat, lng: lng, radius: 3000);
-      if (list.isEmpty) {
-        setState(() => _error = 'Không tìm thấy quán quanh bạn');
-        return;
+        final list = await _api.nearbyRestaurants(lat: lat, lng: lng, radius: 3000);
+        if (list.isEmpty) {
+          setState(() => _error = 'Không tìm thấy quán quanh bạn');
+          return;
+        }
+        first = list.first;
       }
-      final first = list.first;
       // Fetch the FULL restaurant detail (with menu_items + live status)
-      final detail = await _api.restaurantDetail(first['id'] as String);
+      final firstNN = first!;
+      final detail = widget.restaurantId != null ? firstNN : await _api.restaurantDetail(firstNN['id'] as String);
+      _lastDetail = detail; // stash for lat/lng/phone wiring
+      // Fetch reviews in parallel for the Reviews tab
+      _api.restaurantReviews(firstNN['id'] as String).then((rows) {
+        if (!mounted) return;
+        setState(() => _reviews = rows.take(20).map((r) {
+          final user = (r['users'] is Map ? r['users'] as Map : const {});
+          final created = r['created_at'] is String ? DateTime.tryParse(r['created_at'] as String) : null;
+          return detail_v2.RestaurantReviewV2(
+            id: (r['id'] as String?) ?? '',
+            authorName: (user['display_name'] as String?) ?? (user['username'] as String?) ?? 'Foodie',
+            authorAvatarUrl: user['avatar_url'] as String?,
+            rating: _asInt(r['rating']) ?? 5,
+            content: (r['content'] as String?) ?? (r['title'] as String?) ?? '',
+            createdAt: created,
+          );
+        }).toList());
+      });
       final menuRaw = (detail?['menu_items'] as List?) ?? const [];
       // Group menu items by category.
       final byCategory = <String, List<detail_v2.MenuItemV2>>{};
@@ -1065,7 +1443,7 @@ class _RestaurantDetailRealState extends State<_RestaurantDetailReal> {
           id: (m['id'] as String?) ?? '',
           name: (m['name'] as String?) ?? '',
           description: (m['description'] as String?) ?? '',
-          priceVnd: (m['price_vnd'] as int?) ?? 0,
+          priceVnd: _asInt(m['price_vnd']) ?? 0,
           foodSlug: 'lau',
           imageUrl: m['image_url'] as String?,
           tag: (m['is_bestseller'] as bool?) == true ? 'BESTSELLER' : null,
@@ -1075,20 +1453,20 @@ class _RestaurantDetailRealState extends State<_RestaurantDetailReal> {
           .map((e) => detail_v2.MenuCategoryV2(name: e.key, items: e.value))
           .toList();
       setState(() => _r = detail_v2.RestaurantDetailDataV2(
-        id: (first['id'] as String?) ?? '',
-        name: (detail?['name'] as String?) ?? (first['name'] as String?) ?? '',
-        imageUrl: (detail?['cover_url'] as String?) ?? (first['cover_url'] as String?),
+        id: (firstNN['id'] as String?) ?? '',
+        name: (detail?['name'] as String?) ?? (firstNN['name'] as String?) ?? '',
+        imageUrl: (detail?['cover_image'] as String?) ?? (detail?['cover_url'] as String?) ?? (firstNN['cover_image'] as String?) ?? (firstNN['cover_url'] as String?),
         foodSlug: 'lau',
-        rating: ((detail?['rating_avg'] as num?) ?? (first['rating_avg'] as num?) ?? 4.5).toDouble(),
-        reviewCount: ((detail?['rating_count'] as int?) ?? (first['rating_count'] as int?)) ?? 0,
+        rating: _asDouble(detail?['rating_avg']) ?? _asDouble(firstNN['rating_avg']) ?? 4.5,
+        reviewCount: _asInt(detail?['rating_count']) ?? _asInt(firstNN['rating_count']) ?? 0,
         priceRange: (detail?['price_range'] as String?) ?? '50k–150k',
-        openNow: (detail?['restaurant_live']?['is_open'] as bool?) ?? (first['open_now'] as bool?) ?? true,
-        distance: '${((first['distance_m'] as num?) ?? 1200).toInt()}m',
+        openNow: (detail?['restaurant_live']?['is_open'] as bool?) ?? (firstNN['open_now'] as bool?) ?? true,
+        distance: '${_asInt(firstNN['distance_m']) ?? 1200}m',
         hoursLabel: (detail?['hours_label'] as String?) ?? '10–22h',
         closingNote: 'đóng cửa 22:00',
         crowdLabel: 'đông vừa',
-        crowdLevel: '${((detail?['restaurant_live']?['wait_minutes'] as int?) ?? 15)}p chờ',
-        verified: (detail?['is_verified'] as bool?) ?? (first['is_verified'] as bool?) ?? false,
+        crowdLevel: '${_asInt(detail?['restaurant_live']?['wait_minutes']) ?? 15}p chờ',
+        verified: (detail?['is_verified'] as bool?) ?? (firstNN['is_verified'] as bool?) ?? false,
         menu: categories,
       ));
     } catch (e) {
@@ -1107,7 +1485,56 @@ class _RestaurantDetailRealState extends State<_RestaurantDetailReal> {
     if (_r == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
     }
-    return detail_v2.RestaurantDetailScreenV2(restaurant: _r!);
+    // Coordinates + phone are available on the full restaurant row.
+    final lat = _asDouble(_lastDetail?['lat']) ?? _asDouble(_lastDetail?['latitude']);
+    final lng = _asDouble(_lastDetail?['lng']) ?? _asDouble(_lastDetail?['longitude']);
+    final phone = _lastDetail?['phone'] as String?;
+    return detail_v2.RestaurantDetailScreenV2(
+      restaurant: _r!,
+      reviews: _reviews,
+      onDirections: (lat != null && lng != null) ? () async {
+        // Native Google Maps deeplink. Falls back to web URL.
+        final url = 'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng';
+        await launchUrlString(url, mode: LaunchMode.externalApplication);
+      } : null,
+      onCall: (phone != null && phone.isNotEmpty) ? () async {
+        await launchUrlString('tel:$phone');
+      } : null,
+      onBook: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('📅 Đặt bàn sẽ mở Zalo/SMS cho quán khi quán đăng ký gói Boost'),
+          duration: Duration(seconds: 3),
+        ));
+      },
+      onShare: () {
+        Share.share('${_r!.name} trên HNAG — https://tothanhthuy.cloud/r/${_r!.id}');
+      },
+      onAddItem: (item) async {
+        // Real flow: create an order intent for this menu item at THIS quán.
+        final intent = await _api.createOrderIntent(
+          foodId: item.id,
+          restaurantId: _r!.id,
+        );
+        if (!context.mounted) return;
+        if (intent == null) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Quán chưa có link đặt giao "${item.name}"'),
+          ));
+          return;
+        }
+        final url = intent['deeplink'] as String?;
+        final orderId = intent['orderId'] as String?;
+        if (url != null && url.isNotEmpty) {
+          await launchUrlString(url, mode: LaunchMode.externalApplication);
+          // After kicking out to partner app, show live tracking for the intent.
+          if (context.mounted && orderId != null) {
+            Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _OrderTrackingReal(orderId: orderId, restaurantName: _r!.name),
+            ));
+          }
+        }
+      },
+    );
   }
 }
 
@@ -1122,6 +1549,8 @@ class _CartReal extends StatefulWidget {
 class _CartRealState extends State<_CartReal> {
   final _api = HnagApi();
   List<detail_v2.CartItem>? _items;
+  String _restaurantName = '';
+  String? _restaurantId;
 
   @override
   void initState() {
@@ -1130,15 +1559,38 @@ class _CartRealState extends State<_CartReal> {
   }
 
   Future<void> _load() async {
-    final trending = await _api.trendingFoods();
+    // Start cart from user's most recently saved foods (real "interested in"
+    // signal). Fall back to trending if user has no saves.
+    final saves = await _api.mySaves();
+    var foods = saves.take(3).toList();
+    if (foods.isEmpty) {
+      foods = (await _api.trendingFoods()).take(3).toList();
+    }
+    if (foods.isEmpty || !mounted) {
+      if (mounted) setState(() => _items = []);
+      return;
+    }
+    // Find a real restaurant serving the first food (cart belongs to ONE quán).
+    String name = '';
+    String? rid;
+    try {
+      final servers = await _api.restaurantsServingFood(foods.first['id'] as String);
+      if (servers.isNotEmpty) {
+        name = (servers.first['name'] as String?) ?? '';
+        rid = servers.first['id'] as String?;
+      }
+    } catch (_) {}
+
     if (!mounted) return;
     setState(() {
-      _items = trending.take(3).map((f) => detail_v2.CartItem(
+      _restaurantName = name.isEmpty ? 'Quán địa phương' : name;
+      _restaurantId = rid;
+      _items = foods.map((f) => detail_v2.CartItem(
         id: (f['id'] as String?) ?? '',
         name: (f['name_vi'] as String?) ?? '',
         foodSlug: 'pho',
         imageUrl: f['primary_image'] as String?,
-        unitPriceVnd: (f['avg_price_vnd'] as int?) ?? 50000,
+        unitPriceVnd: _asInt(f['avg_price_vnd']) ?? 50000,
         qty: 1,
       )).toList();
     });
@@ -1151,7 +1603,7 @@ class _CartRealState extends State<_CartReal> {
     }
     return detail_v2.CartScreen(
       items: _items!,
-      restaurantName: 'Phở Lý Quốc Sư · Q.3',
+      restaurantName: _restaurantName,
       deliveryFeeVnd: 25000,
       onCheckout: (items, total) {
         Navigator.of(context).push(MaterialPageRoute(
@@ -1159,9 +1611,24 @@ class _CartRealState extends State<_CartReal> {
             items: items,
             subtotalVnd: total - 25000,
             onPlaceOrder: () async {
-              // Real call: POST /v1/orders. Backend wires later. Returns id.
-              await Future.delayed(const Duration(seconds: 1));
-              return 'order-${DateTime.now().millisecondsSinceEpoch}';
+              // Real flow: create one order intent per cart-restaurant.
+              // Backend `/v1/orders/intent` takes one foodId — we use the
+              // first item as the canonical, restaurant is auto-resolved.
+              if (items.isEmpty) return null;
+              final firstFoodId = items.first.id;
+              final intent = await _api.createOrderIntent(
+                foodId: firstFoodId,
+                restaurantId: _restaurantId,
+              );
+              final orderId = intent?['orderId'] as String?;
+              if (orderId == null || !context.mounted) return orderId;
+              // After successful intent: route to live order tracking.
+              Future.microtask(() {
+                Navigator.of(context).pushReplacement(MaterialPageRoute(
+                  builder: (_) => _OrderTrackingReal(orderId: orderId, restaurantName: _restaurantName),
+                ));
+              });
+              return orderId;
             },
           ),
         ));
@@ -1174,17 +1641,171 @@ class _CartRealState extends State<_CartReal> {
 // ORDER TRACKING v2 — for now reads first active order id; stage realtime
 // would come via WS subscribe (Phase 11 wires).
 // ─────────────────────────────────────────────────────────────
-class _OrderTrackingReal extends StatelessWidget {
-  const _OrderTrackingReal();
+/// Real order tracking — when `orderId` is provided, jumps straight in;
+/// otherwise loads the user's most recent open order. If no orders exist,
+/// shows an empty state inviting the user to place one.
+class _OrderTrackingReal extends StatefulWidget {
+  final String? orderId;
+  final String? restaurantName;
+  const _OrderTrackingReal({this.orderId, this.restaurantName});
+  @override
+  State<_OrderTrackingReal> createState() => _OrderTrackingRealState();
+}
+
+class _OrderTrackingRealState extends State<_OrderTrackingReal> {
+  final _api = HnagApi();
+  String? _orderId;
+  String _restaurantName = '';
+  detail_v2.OrderStage _stage = detail_v2.OrderStage.placed;
+  String _eta = '~ 30 phút';
+  bool _loading = true;
+  bool _noOrders = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (widget.orderId != null) {
+      // Came from checkout — fetch the order detail to seed stage.
+      final order = await _fetchOrder(widget.orderId!);
+      if (!mounted) return;
+      setState(() {
+        _orderId = widget.orderId;
+        _restaurantName = widget.restaurantName ?? 'Quán địa phương';
+        _stage = _stageFromString(order?['status'] as String?);
+        _eta = _etaForStage(_stage);
+        _loading = false;
+      });
+      return;
+    }
+    // No id provided: pick the latest open order from history.
+    final history = await _api.myOrders();
+    if (!mounted) return;
+    final open = history.firstWhere(
+      (o) {
+        final s = (o['status'] as String?) ?? '';
+        return s != 'done' && s != 'delivered' && s != 'cancelled';
+      },
+      orElse: () => <String, dynamic>{},
+    );
+    if (open.isEmpty) {
+      setState(() { _loading = false; _noOrders = true; });
+      return;
+    }
+    final partnerName = (open['partner'] as String?) ?? 'Quán địa phương';
+    setState(() {
+      _orderId = open['id'] as String?;
+      _restaurantName = partnerName;
+      _stage = _stageFromString(open['status'] as String?);
+      _eta = _etaForStage(_stage);
+      _loading = false;
+    });
+  }
+
+  Future<Map<String, dynamic>?> _fetchOrder(String id) async {
+    try {
+      final list = await _api.myOrders();
+      for (final o in list) {
+        if (o['id'] == id) return o;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  detail_v2.OrderStage _stageFromString(String? s) {
+    switch (s) {
+      case 'placed':
+      case 'intent': return detail_v2.OrderStage.placed;
+      case 'cooking': return detail_v2.OrderStage.cooking;
+      case 'picking': return detail_v2.OrderStage.picking;
+      case 'delivering': return detail_v2.OrderStage.delivering;
+      case 'done':
+      case 'delivered': return detail_v2.OrderStage.done;
+      default: return detail_v2.OrderStage.placed;
+    }
+  }
+
+  String _etaForStage(detail_v2.OrderStage s) {
+    switch (s) {
+      case detail_v2.OrderStage.placed: return '~ 30 phút tới';
+      case detail_v2.OrderStage.cooking: return '~ 22 phút tới';
+      case detail_v2.OrderStage.picking: return '~ 15 phút tới';
+      case detail_v2.OrderStage.delivering: return '~ 8 phút tới';
+      case detail_v2.OrderStage.done: return 'Đã giao';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Backend orders endpoint not finalized; show stage example.
-    return const detail_v2.OrderTrackingScreen(
-      orderId: 'demo000123',
-      restaurantName: 'Phở Lý Quốc Sư',
-      stage: detail_v2.OrderStage.delivering,
-      etaText: '~ 8 phút tới',
-      driverName: 'Bác Tài',
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    if (_noOrders || _orderId == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Đơn hàng'), backgroundColor: Colors.transparent, elevation: 0),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('🍜', style: TextStyle(fontSize: 56)),
+                const SizedBox(height: 12),
+                Text('Chưa có đơn nào đang giao',
+                  style: HnagType.h3.copyWith(fontFamily: HnagFonts.display),
+                ),
+                const SizedBox(height: 6),
+                const Text('Đặt món ngon đi rồi quay lại đây xem shipper nha 🛵',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return detail_v2.OrderTrackingScreen(
+      orderId: _orderId!,
+      restaurantName: _restaurantName,
+      stage: _stage,
+      etaText: _eta,
+      driverName: _stage.index >= detail_v2.OrderStage.picking.index ? 'Shipper' : null,
+      onCallDriver: () async {
+        // Partner drivers don't expose direct phone yet — show a friendly
+        // notice so the user knows what to expect.
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('📞 Số shipper sẽ hiển thị khi đối tác kết nối API'),
+          duration: Duration(seconds: 3),
+        ));
+      },
+      onCancel: _stage.index < detail_v2.OrderStage.delivering.index ? () async {
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Huỷ đơn?'),
+            content: const Text('Đơn sẽ bị huỷ. Quán có thể tính phí nếu đã bắt đầu nấu.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Không')),
+              TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Huỷ đơn')),
+            ],
+          ),
+        );
+        if (confirm != true || !context.mounted) return;
+        final ok = await _api.cancelOrder(_orderId!);
+        if (!context.mounted) return;
+        if (ok) {
+          setState(() {
+            _stage = detail_v2.OrderStage.done;
+            _eta = 'Đã huỷ';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Đã huỷ đơn')));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không huỷ được, thử lại')));
+        }
+      } : null,
     );
   }
 }
@@ -1207,18 +1828,41 @@ class _MoodWheelReal extends StatelessWidget {
           name: (s['name_vi'] as String?) ?? '',
           imageUrl: s['primary_image'] as String?,
           foodSlug: 'pho',
-          price: '${(((s['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round()}k',
+          price: '${(((_asDouble(s['avg_price_vnd'])) ?? 0).toInt() / 1000).round()}k',
           calories: '${s['avg_calories'] ?? 0} cal',
           time: '${s['cook_time_min'] ?? 30} phút',
-          rating: ((s['rating_avg'] as num?) ?? 4.5).toStringAsFixed(1),
+          rating: ((_asDouble(s['rating_avg'])) ?? 4.5).toStringAsFixed(1),
           kind: 'order',
           kindLabel: 'Giao tận nơi',
           reason: result.theme.isNotEmpty ? result.theme : '${(s['name_vi'] as String?) ?? ''} hợp mood "$mood"',
         )).toList();
+        final sessionId = '00000000-0000-0000-0000-${DateTime.now().millisecondsSinceEpoch.toRadixString(16).padLeft(12, '0').substring(0, 12)}';
         Navigator.of(context).pushReplacement(MaterialPageRoute(
-          builder: (_) => home_v2.CardStackV2(
+          builder: (ctx2) => home_v2.CardStackV2(
             cards: cards,
-            onAction: (c, a) => debugPrint('Mood card ${c.name} → $a'),
+            onAction: (c, a) {
+              unawaited(_api.aiFeedback(
+                sessionId: sessionId,
+                foodId: c.id,
+                action: switch (a) {
+                  home_v2.CardSwipe.skip => 'skip',
+                  home_v2.CardSwipe.save || home_v2.CardSwipe.later => 'save',
+                  home_v2.CardSwipe.detail => 'view',
+                  home_v2.CardSwipe.reroll => 'skip',
+                },
+              ));
+              if (a == home_v2.CardSwipe.save || a == home_v2.CardSwipe.later) {
+                unawaited(_api.addSave(c.id));
+                ScaffoldMessenger.of(ctx2).showSnackBar(SnackBar(
+                  content: Text('⭐ Đã lưu ${c.name}'),
+                  duration: const Duration(seconds: 2),
+                ));
+              } else if (a == home_v2.CardSwipe.detail) {
+                Navigator.of(ctx2).push(MaterialPageRoute(
+                  builder: (_) => _FoodDetailRealById(foodId: c.id),
+                ));
+              }
+            },
           ),
         ));
       },
@@ -1300,7 +1944,7 @@ class _VoiceRealState extends State<_VoiceReal> {
         }
         final top = result.foods.first;
         final name = (top['name_vi'] as String?) ?? 'món';
-        final priceK = (((top['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round();
+        final priceK = (((_asDouble(top['avg_price_vnd'])) ?? 0).toInt() / 1000).round();
         final reply = 'Hà gợi ý $name, ${priceK}k. ${result.theme}';
         unawaited(_tts.speak(reply));
         return reply;
@@ -1360,7 +2004,7 @@ class _ProfileRealState extends State<_ProfileReal> {
         return;
       }
       final u = me['user'] as Map<String, dynamic>;
-      final level = ((u['level'] as int?) ?? 1).clamp(1, 99);
+      final level = (_asInt(u['level']) ?? 1).clamp(1, 99);
       final fc = (u['foodie_class'] as String?) ?? 'tep';
       final emoji = switch (fc) {
         'tep' => '🦐', 'tom' => '🍤', 'cua' => '🦀', 'muc' => '🦑', 'ca-map' => '🦈', 'rong' => '🐉', _ => '🦐',
@@ -1396,7 +2040,7 @@ class _ProfileRealState extends State<_ProfileReal> {
         final food = (p['foods'] is Map ? (p['foods'] as Map)['name_vi'] : null) as String? ?? 'Món';
         return profile_v2.ProfileReviewItem(
           food: food,
-          rating: (p['rating'] as int?) ?? 5,
+          rating: _asInt(p['rating']) ?? 5,
           text: (p['caption'] as String?) ?? '',
           relTime: _relTimeFrom(p['created_at']),
         );
@@ -1412,8 +2056,8 @@ class _ProfileRealState extends State<_ProfileReal> {
         foodieClass: classLabel,
         classEmoji: emoji,
         reviews: reviewItems.length,
-        followers: (me['followers'] as int?) ?? 0,
-        following: (me['following'] as int?) ?? 0,
+        followers: _asInt(me['followers']) ?? 0,
+        following: _asInt(me['following']) ?? 0,
         isPremium: (u['is_premium'] as bool?) ?? false,
         isVerified: (u['is_verified'] as bool?) ?? false,
         isMe: true,
@@ -1451,6 +2095,15 @@ class _ProfileRealState extends State<_ProfileReal> {
     return profile_v2.ProfileScreenV2(
       profile: _profile!,
       onSettings: () => _openSettingsAndTools(context),
+      onShare: () {
+        final user = AuthService.instance.currentUser;
+        final handle = user?.username ?? 'foodie';
+        Share.share('Theo dõi @$handle trên HNAG — https://tothanhthuy.cloud/u/$handle');
+      },
+      onEdit: () {
+        // Quick-edit: open settings sheet (Profile section is there)
+        _openSettingsAndTools(context);
+      },
     );
   }
 }
@@ -1459,13 +2112,15 @@ void _openSettingsAndTools(BuildContext context) {
   showModalBottomSheet(
     context: context,
     backgroundColor: Colors.transparent,
+    isScrollControlled: true,
     builder: (_) => Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
       decoration: const BoxDecoration(
         color: Color(0xFFFBFAF7),
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).viewInsets.bottom + 24),
-      child: Column(
+      child: SingleChildScrollView(child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1500,8 +2155,65 @@ void _openSettingsAndTools(BuildContext context) {
             onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.restaurantDetailDemo(context))); }),
           _ToolMenuItem(emoji: '🛒', title: 'Giỏ hàng', subtitle: 'Cart + checkout flow',
             onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.cartDemo(context))); }),
+          _ToolMenuItem(emoji: '💑', title: 'Couple Mode', subtitle: 'Chọn món cho 2 người · date night',
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(MaterialPageRoute(builder: (ctx2) => CoupleModeScreen(
+                onInvite: (phoneOrUsername) async {
+                  // Real backend invite → /v1/couple/invite
+                  final ok = await HnagApi().coupleInvite(phoneOrUsername);
+                  if (!ctx2.mounted) return;
+                  ScaffoldMessenger.of(ctx2).showSnackBar(SnackBar(
+                    content: Text(ok
+                        ? '💌 Lời mời đã gửi tới $phoneOrUsername — chờ họ accept!'
+                        : 'Không tìm thấy user — kiểm tra @username hoặc SĐT'),
+                    duration: const Duration(seconds: 3),
+                  ));
+                },
+              )));
+            }),
+          _ToolMenuItem(emoji: '🎰', title: 'Random Wheel', subtitle: 'Vòng quay quyết định ngẫu nhiên',
+            onTap: () {
+              Navigator.pop(context);
+              const opts = [
+                WheelOption('pho', 'Phở bò', Color(0xFFFF6B2B)),
+                WheelOption('com', 'Cơm tấm', Color(0xFFF59E0B)),
+                WheelOption('bun', 'Bún bò', Color(0xFFEF4444)),
+                WheelOption('banh', 'Bánh mì', Color(0xFFEAB308)),
+                WheelOption('lau', 'Lẩu', Color(0xFFDC2626)),
+                WheelOption('goi', 'Gỏi cuốn', Color(0xFF22C55E)),
+              ];
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => RandomWheelScreen(
+                options: opts,
+                onResult: (w) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('🎯 Quay được: ${w.label}'))),
+              )));
+            }),
+          _ToolMenuItem(emoji: '🗺️', title: 'Bản đồ quán gần', subtitle: 'Xem quán theo địa lý',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NearbyRestaurantsScreen())); }),
+          _ToolMenuItem(emoji: '🥬', title: 'Quét tủ lạnh', subtitle: 'Có gì trong tủ → AI gợi món',
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => FridgeScanScreen(
+                onScan: (_) async { throw UnimplementedError('Vision AI chưa bật — chỉ nhập tay'); },
+                onSuggestRecipes: (items) async {
+                  final ings = items.map((e) => e.name).toList();
+                  final recipes = await HnagApi().aiFridgeRecipes(ings);
+                  return recipes.map((r) {
+                    final food = r['food'] as Map<String, dynamic>? ?? {};
+                    return FridgeRecipe(
+                      id: food['id'] as String? ?? '',
+                      name: food['name_vi'] as String? ?? '',
+                      timeMin: _asInt(food['cook_time_min']) ?? 30,
+                      uses: ((r['uses'] as List?) ?? []).cast<String>(),
+                      missing: ((r['missing'] as List?) ?? []).cast<String>(),
+                      tip: r['tip'] as String? ?? '',
+                    );
+                  }).toList();
+                },
+              )));
+            }),
         ],
-      ),
+      )),
     ),
   );
 }

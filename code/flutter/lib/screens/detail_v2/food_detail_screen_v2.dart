@@ -55,6 +55,46 @@ class FoodDetailDataV2 {
   });
 }
 
+class FoodPostV2 {
+  final String id;
+  final String authorName;
+  final String? authorAvatarUrl;
+  final String caption;
+  final String? mediaUrl;
+  final int likeCount;
+  final int commentCount;
+  final DateTime? createdAt;
+  const FoodPostV2({
+    required this.id,
+    required this.authorName,
+    this.authorAvatarUrl,
+    required this.caption,
+    this.mediaUrl,
+    this.likeCount = 0,
+    this.commentCount = 0,
+    this.createdAt,
+  });
+}
+
+class RestaurantBriefForFood {
+  final String id;
+  final String name;
+  final String? imageUrl;
+  final double? rating;
+  final int? distanceM;
+  final int priceVnd;
+  final String? address;
+  const RestaurantBriefForFood({
+    required this.id,
+    required this.name,
+    this.imageUrl,
+    this.rating,
+    this.distanceM,
+    required this.priceVnd,
+    this.address,
+  });
+}
+
 class FoodDetailScreenV2 extends StatefulWidget {
   final FoodDetailDataV2 food;
   final VoidCallback? onCook;
@@ -62,6 +102,13 @@ class FoodDetailScreenV2 extends StatefulWidget {
   final VoidCallback? onAddToCart;
   final VoidCallback? onSave;
   final VoidCallback? onShare;
+  /// Real restaurants serving this food. When non-null, the "Quán bán" tab
+  /// renders this list; otherwise shows an empty state.
+  final List<RestaurantBriefForFood>? restaurantsServing;
+  final void Function(RestaurantBriefForFood)? onTapRestaurant;
+  /// Real posts about this food (Bài viết tab).
+  final List<FoodPostV2>? posts;
+  final void Function(FoodPostV2)? onTapPost;
 
   const FoodDetailScreenV2({
     super.key,
@@ -71,6 +118,10 @@ class FoodDetailScreenV2 extends StatefulWidget {
     this.onAddToCart,
     this.onSave,
     this.onShare,
+    this.restaurantsServing,
+    this.onTapRestaurant,
+    this.posts,
+    this.onTapPost,
   });
 
   @override
@@ -82,6 +133,47 @@ class _FoodDetailScreenV2State extends State<FoodDetailScreenV2> {
   bool _saved = false;
 
   String _formatPrice(int vnd) => '${(vnd / 1000).round()}k';
+
+  void _showMoreMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        final t = sheetCtx.hnag;
+        Widget row(String icon, String label, VoidCallback onTap) => ListTile(
+          leading: HnagIcon(icon, size: 22, color: t.text),
+          title: Text(label, style: HnagType.bodyLg.copyWith(color: t.text, fontFamily: HnagFonts.body)),
+          onTap: () { Navigator.pop(sheetCtx); onTap(); },
+        );
+        return Container(
+          decoration: BoxDecoration(
+            color: t.bgRaised,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.only(bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 12, top: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: t.divider, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 8),
+              row('share', 'Chia sẻ món', () => widget.onShare?.call()),
+              row('bookmark', 'Lưu vào sưu tập', () => widget.onSave?.call()),
+              row('flag', 'Báo cáo nội dung', () {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Đã nhận báo cáo. HNAG sẽ xem trong 24h.'),
+                ));
+              }),
+              row('info', 'Về món này', () {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('${widget.food.name} · ${widget.food.region} · ${widget.food.calories}cal'),
+                ));
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -150,7 +242,7 @@ class _FoodDetailScreenV2State extends State<FoodDetailScreenV2> {
                                         const SizedBox(width: 8),
                                         HnagIconButton(icon: 'share', variant: IconBtnVariant.glass, onPressed: widget.onShare),
                                         const SizedBox(width: 8),
-                                        const HnagIconButton(icon: 'more', variant: IconBtnVariant.glass),
+                                        HnagIconButton(icon: 'more', variant: IconBtnVariant.glass, onPressed: () => _showMoreMenu(context)),
                                       ],
                                     ),
                                   ],
@@ -267,8 +359,8 @@ class _FoodDetailScreenV2State extends State<FoodDetailScreenV2> {
                         ),
 
                         if (_tab == 'Công thức') ..._buildRecipe(t)
-                        else if (_tab == 'Quán bán') _placeholderTab(t, '🍽 Tab "Quán bán" — coming soon')
-                        else _placeholderTab(t, '📝 Tab "Bài viết" — coming soon'),
+                        else if (_tab == 'Quán bán') _buildRestaurants(t)
+                        else _buildPosts(t),
 
                         const SizedBox(height: 32),
                       ]),
@@ -447,14 +539,161 @@ class _FoodDetailScreenV2State extends State<FoodDetailScreenV2> {
     ];
   }
 
-  Widget _placeholderTab(SemanticTokens t, String text) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 32, 20, 8),
-    child: Center(
-      child: Text(text,
-        style: HnagType.bodyLg.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+  Widget _buildRestaurants(SemanticTokens t) {
+    final list = widget.restaurantsServing;
+    if (list == null || list.isEmpty) return _placeholderTab(t, 'Quán bán');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      child: Column(
+        children: [
+          for (final r in list) ...[
+            HnagCard(
+              padding: EdgeInsets.zero,
+              onTap: widget.onTapRestaurant == null ? null : () => widget.onTapRestaurant!(r),
+              child: Row(
+                children: [
+                  HnagPhoto(width: 88, height: 88, imageUrl: r.imageUrl, foodSlug: widget.food.foodSlug, radius: HnagRadius.md),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(r.name,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: HnagType.label.copyWith(color: t.text, fontWeight: FontWeight.w700, fontFamily: HnagFonts.body),
+                          ),
+                          const SizedBox(height: 2),
+                          if (r.address != null && r.address!.isNotEmpty)
+                            Text(r.address!,
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+                            ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              if (r.rating != null) ...[
+                                const HnagIcon('star', size: 14, color: HnagColors.turmeric500),
+                                const SizedBox(width: 2),
+                                Text(r.rating!.toStringAsFixed(1),
+                                  style: HnagType.bodySm.copyWith(color: t.text, fontFamily: HnagFonts.body),
+                                ),
+                                const SizedBox(width: 10),
+                              ],
+                              if (r.distanceM != null) ...[
+                                HnagIcon('pin', size: 14, color: t.textMuted),
+                                const SizedBox(width: 2),
+                                Text(r.distanceM! < 1000 ? '${r.distanceM}m' : '${(r.distanceM! / 1000).toStringAsFixed(1)}km',
+                                  style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+                                ),
+                                const SizedBox(width: 10),
+                              ],
+                              Text('${(r.priceVnd / 1000).round()}k',
+                                style: HnagType.bodySm.copyWith(color: t.brand, fontWeight: FontWeight.w700, fontFamily: HnagFonts.body),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(right: 12),
+                    child: HnagIcon('chevR', size: 18),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ],
       ),
-    ),
-  );
+    );
+  }
+
+  Widget _buildPosts(SemanticTokens t) {
+    final posts = widget.posts;
+    if (posts == null) {
+      return const Padding(padding: EdgeInsets.symmetric(vertical: 40), child: Center(child: CircularProgressIndicator()));
+    }
+    if (posts.isEmpty) return _placeholderTab(t, 'Bài viết');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      child: Column(children: [
+        for (final p in posts) ...[
+          HnagCard(
+            padding: EdgeInsets.zero,
+            onTap: widget.onTapPost == null ? null : () => widget.onTapPost!(p),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (p.mediaUrl != null && p.mediaUrl!.isNotEmpty)
+                  HnagPhoto(imageUrl: p.mediaUrl, aspectRatio: 16 / 10, foodSlug: widget.food.foodSlug, radius: HnagRadius.md),
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        HnagAvatar(name: p.authorName, imageUrl: p.authorAvatarUrl, size: 32),
+                        const SizedBox(width: 8),
+                        Text(p.authorName,
+                          style: HnagType.label.copyWith(color: t.text, fontWeight: FontWeight.w600, fontFamily: HnagFonts.body),
+                        ),
+                      ]),
+                      const SizedBox(height: 8),
+                      Text(p.caption,
+                        maxLines: 3, overflow: TextOverflow.ellipsis,
+                        style: HnagType.body.copyWith(color: t.text, fontFamily: HnagFonts.body),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        HnagIcon('heart', size: 14, color: t.textMuted),
+                        const SizedBox(width: 4),
+                        Text('${p.likeCount}', style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body)),
+                        const SizedBox(width: 12),
+                        HnagIcon('chat', size: 14, color: t.textMuted),
+                        const SizedBox(width: 4),
+                        Text('${p.commentCount}', style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body)),
+                      ]),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ]),
+    );
+  }
+
+  Widget _placeholderTab(SemanticTokens t, String text) {
+    // Graceful empty state instead of "coming soon" copy.
+    final isShop = text.contains('Quán');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 32, 20, 24),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(isShop ? '🍽️' : '📝', style: HnagType.d3),
+            const SizedBox(height: 8),
+            Text(isShop ? 'Chưa có quán phục vụ món này' : 'Chưa có bài viết',
+              textAlign: TextAlign.center,
+              style: HnagType.h4.copyWith(color: t.text, fontFamily: HnagFonts.display),
+            ),
+            const SizedBox(height: 4),
+            Text(isShop ? 'Thử tìm món gần bạn hơn nha' : 'Hãy là người đầu tiên đăng bài',
+              textAlign: TextAlign.center,
+              style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _StatChip extends StatelessWidget {

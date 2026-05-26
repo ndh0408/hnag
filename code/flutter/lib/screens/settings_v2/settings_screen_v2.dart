@@ -2,7 +2,9 @@
 // Mirrors design/m-settings.jsx structure.
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
+import '../../api/auth_service.dart';
 import '../../design/tokens.dart';
 import '../../design/theme.dart';
 import '../../widgets/ds/ds.dart';
@@ -130,15 +132,15 @@ class _SettingsScreenV2State extends State<SettingsScreenV2> {
                 ),
 
               _section('Tài khoản', [
-                SettingsRow(icon: 'user',  title: 'Hồ sơ'),
-                SettingsRow(icon: 'lock',  title: 'Bảo mật & 2FA'),
-                SettingsRow(icon: 'email', title: 'Email'),
+                SettingsRow(icon: 'user',  title: 'Hồ sơ', subtitle: 'Tên, ảnh, bio', onTap: () => _showInfo(context, 'Hồ sơ', 'Chỉnh tên hiển thị, avatar, bio trong Edit profile.')),
+                SettingsRow(icon: 'lock',  title: 'Bảo mật & 2FA', subtitle: 'OTP qua email/SMS', onTap: () => _showInfo(context, 'Bảo mật', 'Đổi mật khẩu hoặc bật 2FA qua email/SMS đang hoạt động qua OTP login.')),
+                SettingsRow(icon: 'email', title: 'Email', subtitle: AuthService.instance.currentUser?.username ?? '—', onTap: () => _showInfo(context, 'Email', 'Email tài khoản: ${AuthService.instance.currentUser?.username ?? "—"}. Đăng nhập lại nếu muốn đổi.')),
               ]),
 
               _section('Khẩu vị & Sức khoẻ', [
-                SettingsRow(icon: 'alert', title: 'Dị ứng & Diet'),
-                SettingsRow(icon: 'wallet', title: 'Ngân sách'),
-                SettingsRow(icon: 'leaf', title: 'Mục tiêu sức khoẻ'),
+                SettingsRow(icon: 'alert', title: 'Dị ứng & Diet', subtitle: 'Hà sẽ tránh các món chứa', onTap: () => _showInfo(context, 'Dị ứng', 'Khai báo dị ứng ở Onboarding. Reset Taste để chạy lại.')),
+                SettingsRow(icon: 'wallet', title: 'Ngân sách', subtitle: '50k–150k mỗi bữa', onTap: () => _showInfo(context, 'Ngân sách', 'Bạn có thể đổi mức chi tiêu mỗi bữa trong AI Decide.')),
+                SettingsRow(icon: 'leaf', title: 'Mục tiêu sức khoẻ', subtitle: 'Giữ dáng / Bulk / Cân bằng', onTap: () => _showInfo(context, 'Mục tiêu sức khoẻ', 'Hà gợi món theo mục tiêu của bạn. Đổi ở Onboarding.')),
                 SettingsRow(
                   icon: 'refresh',
                   title: 'Reset Taste Memory',
@@ -196,26 +198,26 @@ class _SettingsScreenV2State extends State<SettingsScreenV2> {
               ]),
 
               _section('Tích hợp', [
-                SettingsRow(icon: 'truck', title: 'GrabFood / ShopeeFood / beFood'),
-                SettingsRow(icon: 'heart', title: 'Apple Health / Google Fit'),
-                SettingsRow(icon: 'cal',   title: 'Google Calendar'),
+                SettingsRow(icon: 'truck', title: 'GrabFood / ShopeeFood / beFood', subtitle: 'Đã wired qua deeplink', onTap: () => _showInfo(context, 'Đối tác giao', 'Khi đặt món, HNAG tự mở app Grab/Shopee/Be để hoàn tất.')),
+                SettingsRow(icon: 'heart', title: 'Apple Health / Google Fit', subtitle: 'Sync calo & dinh dưỡng', onTap: () => _showInfo(context, 'Health Sync', 'HNAG sẽ ghi calo + macro vào Health/Fit khi bạn cho phép permission.')),
+                SettingsRow(icon: 'cal',   title: 'Google Calendar', subtitle: 'Thêm lịch nấu / meal-plan', onTap: () => _showInfo(context, 'Calendar', 'Meal Planner có thể export vào Google Calendar khi bạn link OAuth.')),
               ]),
 
               _section('Pháp lý & quyền riêng tư', [
-                SettingsRow(icon: 'lock', title: 'Chính sách bảo mật'),
-                SettingsRow(icon: 'book', title: 'Điều khoản dịch vụ'),
-                SettingsRow(icon: 'download', title: 'Tải dữ liệu của tôi', subtitle: 'GDPR / Nghị định 13'),
+                SettingsRow(icon: 'lock', title: 'Chính sách bảo mật', onTap: () => _openWeb(context, 'https://tothanhthuy.cloud/privacy')),
+                SettingsRow(icon: 'book', title: 'Điều khoản dịch vụ', onTap: () => _openWeb(context, 'https://tothanhthuy.cloud/terms')),
+                SettingsRow(icon: 'download', title: 'Tải dữ liệu của tôi', subtitle: 'GDPR / Nghị định 13', onTap: () => _showInfo(context, 'Export', 'Email gdpr@tothanhthuy.cloud — HNAG gửi file JSON trong 7 ngày.')),
                 SettingsRow(
                   icon: 'trash',
                   title: 'Xoá tài khoản',
                   danger: true,
-                  onTap: widget.onDeleteAccount,
+                  onTap: widget.onDeleteAccount ?? () => _showInfo(context, 'Xoá tài khoản', 'Gửi yêu cầu tới support@tothanhthuy.cloud. Dữ liệu xoá trong 30 ngày.'),
                 ),
               ]),
 
               _section('Khác', [
-                SettingsRow(icon: 'chat', title: 'Gửi phản hồi'),
-                SettingsRow(icon: 'info', title: 'Về HNAG', subtitle: 'Version 1.2.0'),
+                SettingsRow(icon: 'chat', title: 'Gửi phản hồi', onTap: () => _openWeb(context, 'mailto:huy04082000@gmail.com?subject=HNAG%20feedback')),
+                SettingsRow(icon: 'info', title: 'Về HNAG', subtitle: 'Version 1.2.0', onTap: () => _showInfo(context, 'HNAG v1.2.0', 'Hôm Nay Ăn Gì? — AI gợi món Việt cho người Việt. Made in HCMC 🇻🇳')),
                 SettingsRow(
                   icon: 'logout',
                   title: 'Đăng xuất',
@@ -295,6 +297,41 @@ class _SettingsScreenV2State extends State<SettingsScreenV2> {
     if (v != null) {
       setState(() => _language = v);
       widget.onLanguageChanged?.call(v);
+    }
+  }
+
+  void _showInfo(BuildContext context, String title, String body) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final t = ctx.hnag;
+        return Container(
+          decoration: BoxDecoration(color: t.bgRaised, borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: t.divider, borderRadius: BorderRadius.circular(2)))),
+              const SizedBox(height: 12),
+              Text(title, style: HnagType.h3.copyWith(color: t.text, fontFamily: HnagFonts.display)),
+              const SizedBox(height: 8),
+              Text(body, style: HnagType.body.copyWith(color: t.textMuted, fontFamily: HnagFonts.body)),
+              const SizedBox(height: 16),
+              SizedBox(width: double.infinity, child: HnagButton(label: 'OK', variant: BtnVariant.primary, onPressed: () => Navigator.pop(ctx))),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openWeb(BuildContext context, String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Không mở được: $url')));
     }
   }
 

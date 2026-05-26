@@ -84,20 +84,36 @@ export class PostsService {
   }
 
   async comment(userId: string, postId: string, content: string, parentId?: string) {
+    const trimmed = content.trim();
+    if (!trimmed) throw new NotFoundException('Empty comment');
     const c = await this.prisma.post_comments.create({
-      data: { user_id: userId, post_id: postId, content, parent_id: parentId },
+      data: { user_id: userId, post_id: postId, content: trimmed, parent_id: parentId },
     });
     await this.prisma.posts.update({ where: { id: postId }, data: { comment_count: { increment: 1 } } });
-    return c;
+    // Hydrate author info so the client can render immediately without a refetch.
+    const author = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, display_name: true, avatar_url: true },
+    });
+    return { ...c, user: author };
   }
 
   async listComments(postId: string, page: number = 1) {
-    return this.prisma.post_comments.findMany({
+    const rows = await this.prisma.post_comments.findMany({
       where: { post_id: postId, parent_id: null },
       orderBy: { created_at: 'desc' },
       take: 30,
       skip: (page - 1) * 30,
     });
+    if (rows.length === 0) return [];
+    // post_comments has no Prisma relation to users in the schema, so join manually.
+    const userIds = Array.from(new Set(rows.map((r) => r.user_id).filter((v): v is string => !!v)));
+    const users = await this.prisma.users.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, username: true, display_name: true, avatar_url: true },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return rows.map((r) => ({ ...r, user: r.user_id ? byId.get(r.user_id) ?? null : null }));
   }
 
   // Stories

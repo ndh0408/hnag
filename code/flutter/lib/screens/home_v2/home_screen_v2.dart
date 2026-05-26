@@ -16,7 +16,8 @@ class StoryItem {
   final String? avatarUrl;
   final String? mediaUrl;
   final String foodSlug;
-  const StoryItem({required this.name, this.avatarUrl, this.mediaUrl, this.foodSlug = 'pho'});
+  final VoidCallback? onTap;
+  const StoryItem({required this.name, this.avatarUrl, this.mediaUrl, this.foodSlug = 'pho', this.onTap});
 }
 
 class HomeScreenV2 extends StatelessWidget {
@@ -298,7 +299,7 @@ class _Story extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.hnag;
-    return Column(
+    final content = Column(
       children: [
         Container(
           width: 60, height: 60,
@@ -330,6 +331,8 @@ class _Story extends StatelessWidget {
         ),
       ],
     );
+    if (item.onTap == null) return content;
+    return GestureDetector(behavior: HitTestBehavior.opaque, onTap: item.onTap, child: content);
   }
 }
 
@@ -480,6 +483,7 @@ class FriendActivity {
   final String? avatarUrl;
   final String emoji;
   final bool cooking;
+  final VoidCallback? onTap;
   const FriendActivity({
     required this.name,
     required this.text,
@@ -487,6 +491,7 @@ class FriendActivity {
     this.avatarUrl,
     this.emoji = '🍜',
     this.cooking = false,
+    this.onTap,
   });
 }
 
@@ -503,45 +508,49 @@ class _FriendsCard extends StatelessWidget {
         children: [
           for (var i = 0; i < items.length; i++) ...[
             if (i > 0) const Padding(padding: EdgeInsets.symmetric(vertical: 10), child: HnagDivider()),
-            Row(
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    HnagAvatar(name: items[i].name, imageUrl: items[i].avatarUrl, size: 40),
-                    if (items[i].cooking)
-                      Positioned(
-                        right: -2, bottom: -2,
-                        child: Container(
-                          width: 18, height: 18,
-                          decoration: BoxDecoration(
-                            color: t.warning,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: t.bg, width: 2),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(items[i].emoji, style: const TextStyle(fontSize: 10)),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: items[i].onTap,
+              child: Row(
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
                     children: [
-                      Text(items[i].name,
-                        style: HnagType.label.copyWith(color: t.text, fontWeight: FontWeight.w600, fontFamily: HnagFonts.body),
-                      ),
-                      const SizedBox(height: 2),
-                      Text('${items[i].text} · ${items[i].time}',
-                        style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
-                      ),
+                      HnagAvatar(name: items[i].name, imageUrl: items[i].avatarUrl, size: 40),
+                      if (items[i].cooking)
+                        Positioned(
+                          right: -2, bottom: -2,
+                          child: Container(
+                            width: 18, height: 18,
+                            decoration: BoxDecoration(
+                              color: t.warning,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: t.bg, width: 2),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(items[i].emoji, style: const TextStyle(fontSize: 10)),
+                          ),
+                        ),
                     ],
                   ),
-                ),
-                const HnagIconButton(icon: 'chat', variant: IconBtnVariant.soft, size: IconBtnSize.sm),
-              ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(items[i].name,
+                          style: HnagType.label.copyWith(color: t.text, fontWeight: FontWeight.w600, fontFamily: HnagFonts.body),
+                        ),
+                        const SizedBox(height: 2),
+                        Text('${items[i].text} · ${items[i].time}',
+                          style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+                        ),
+                      ],
+                    ),
+                  ),
+                  HnagIconButton(icon: 'chat', variant: IconBtnVariant.soft, size: IconBtnSize.sm, onPressed: items[i].onTap),
+                ],
+              ),
             ),
           ],
         ],
@@ -558,7 +567,8 @@ class TikTokVideo {
   final String views;
   final String foodSlug;
   final String? videoUrl;
-  const TikTokVideo({required this.name, required this.views, required this.foodSlug, this.videoUrl});
+  final VoidCallback? onTap;
+  const TikTokVideo({required this.name, required this.views, required this.foodSlug, this.videoUrl, this.onTap});
 }
 
 class _TiktokGrid extends StatelessWidget {
@@ -576,32 +586,36 @@ class _TiktokGrid extends StatelessWidget {
       ),
       itemBuilder: (_, i) {
         final v = items[i];
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(HnagRadius.md),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              HnagPhoto(foodSlug: v.foodSlug, aspectRatio: 9 / 16),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
-                    stops: const [0.5, 1.0],
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: v.onTap,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(HnagRadius.md),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                HnagPhoto(foodSlug: v.foodSlug, aspectRatio: 9 / 16),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                      stops: const [0.5, 1.0],
+                    ),
                   ),
                 ),
-              ),
-              Positioned(
-                top: 8, left: 8,
-                child: HnagBadge(label: v.views, icon: 'play', variant: BadgeVariant.glass),
-              ),
-              Positioned(
-                left: 10, right: 10, bottom: 10,
-                child: Text(v.name,
-                  style: HnagType.label.copyWith(color: Colors.white, fontFamily: HnagFonts.body),
+                Positioned(
+                  top: 8, left: 8,
+                  child: HnagBadge(label: v.views, icon: 'play', variant: BadgeVariant.glass),
                 ),
-              ),
-            ],
+                Positioned(
+                  left: 10, right: 10, bottom: 10,
+                  child: Text(v.name,
+                    style: HnagType.label.copyWith(color: Colors.white, fontFamily: HnagFonts.body),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },

@@ -378,7 +378,11 @@ class _ProfileScreenV2State extends State<ProfileScreenV2> {
           ),
           itemBuilder: (_, i) {
             final b = badges[i];
-            final unlocked = i <= 3; // demo: 4 unlocked
+            // Real unlock derived from user's foodie class progression.
+            // tép(0)/tôm(1)/cua(2)/mực(3)/cá-mập(4)/rồng(5)
+            const order = ['tép', 'tôm', 'cua', 'mực', 'cá mập', 'rồng'];
+            final currentTier = order.indexWhere((x) => x.toLowerCase() == widget.profile.foodieClass.toLowerCase());
+            final unlocked = i <= (currentTier >= 0 ? currentTier : 0);
             return HnagCard(
               variant: unlocked ? CardVariant.def : CardVariant.dashed,
               padding: const EdgeInsets.all(12),

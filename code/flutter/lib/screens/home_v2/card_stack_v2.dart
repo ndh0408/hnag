@@ -16,12 +16,16 @@ class CardStackV2 extends StatefulWidget {
   final void Function(FoodCardLargeData card, CardSwipe action) onAction;
   final VoidCallback? onClose;
   final VoidCallback? onSettings;
+  /// Fired when the user runs out of cards and taps the empty-state refresh.
+  /// Parent should fetch a fresh batch of suggestions.
+  final VoidCallback? onRefreshStack;
   const CardStackV2({
     super.key,
     required this.cards,
     required this.onAction,
     this.onClose,
     this.onSettings,
+    this.onRefreshStack,
   });
 
   @override
@@ -214,7 +218,13 @@ class _CardStackV2State extends State<CardStackV2> with SingleTickerProviderStat
               variant: BtnVariant.gradient,
               size: BtnSize.lg,
               iconLeading: 'refresh',
-              onPressed: () => setState(() => _index = 0),
+              onPressed: () {
+                if (widget.onRefreshStack != null) {
+                  widget.onRefreshStack!();
+                } else {
+                  setState(() => _index = 0);
+                }
+              },
             ),
           ],
         ),

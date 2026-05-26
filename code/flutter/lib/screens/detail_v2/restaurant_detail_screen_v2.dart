@@ -69,6 +69,23 @@ class MenuItemV2 {
   });
 }
 
+class RestaurantReviewV2 {
+  final String id;
+  final String authorName;
+  final String? authorAvatarUrl;
+  final int rating;
+  final String content;
+  final DateTime? createdAt;
+  const RestaurantReviewV2({
+    required this.id,
+    required this.authorName,
+    this.authorAvatarUrl,
+    required this.rating,
+    required this.content,
+    this.createdAt,
+  });
+}
+
 class RestaurantDetailScreenV2 extends StatefulWidget {
   final RestaurantDetailDataV2 restaurant;
   final VoidCallback? onCall;
@@ -77,6 +94,8 @@ class RestaurantDetailScreenV2 extends StatefulWidget {
   final ValueChanged<MenuItemV2>? onAddItem;
   final VoidCallback? onSave;
   final VoidCallback? onShare;
+  /// Real reviews — when non-null, the "Reviews" tab renders this list.
+  final List<RestaurantReviewV2>? reviews;
 
   const RestaurantDetailScreenV2({
     super.key,
@@ -87,6 +106,7 @@ class RestaurantDetailScreenV2 extends StatefulWidget {
     this.onAddItem,
     this.onSave,
     this.onShare,
+    this.reviews,
   });
 
   @override
@@ -251,6 +271,7 @@ class _RestaurantDetailScreenV2State extends State<RestaurantDetailScreenV2> {
                   ),
                   const SizedBox(height: 16),
                   if (_tab == 'Menu') ..._buildMenu(t, categories, visibleItems)
+                  else if (_tab == 'Reviews') _buildReviews(t)
                   else _placeholder(t, _tab),
                   const SizedBox(height: 32),
                 ]),
@@ -338,14 +359,109 @@ class _RestaurantDetailScreenV2State extends State<RestaurantDetailScreenV2> {
     ];
   }
 
-  Widget _placeholder(SemanticTokens t, String tab) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
-    child: Center(
-      child: Text('Tab "$tab" — coming soon',
-        style: HnagType.bodyLg.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+  Widget _buildReviews(SemanticTokens t) {
+    final reviews = widget.reviews;
+    if (reviews == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (reviews.isEmpty) return _placeholder(t, 'Reviews');
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        children: [
+          for (final r in reviews) ...[
+            HnagCard(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      HnagAvatar(name: r.authorName, imageUrl: r.authorAvatarUrl, size: 36),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(r.authorName,
+                              style: HnagType.label.copyWith(color: t.text, fontWeight: FontWeight.w700, fontFamily: HnagFonts.body),
+                            ),
+                            const SizedBox(height: 2),
+                            Row(children: [
+                              for (var i = 0; i < 5; i++)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 1),
+                                  child: HnagIcon('star', size: 13,
+                                    color: i < r.rating ? HnagColors.turmeric500 : t.divider,
+                                  ),
+                                ),
+                              const SizedBox(width: 6),
+                              if (r.createdAt != null)
+                                Text(_relTime(r.createdAt!),
+                                  style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+                                ),
+                            ]),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(r.content,
+                    style: HnagType.body.copyWith(color: t.text, fontFamily: HnagFonts.body),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ],
       ),
-    ),
-  );
+    );
+  }
+
+  String _relTime(DateTime d) {
+    final diff = DateTime.now().difference(d);
+    if (diff.inMinutes < 1) return 'vừa xong';
+    if (diff.inHours < 1) return '${diff.inMinutes}p';
+    if (diff.inDays < 1) return '${diff.inHours}h';
+    if (diff.inDays < 30) return '${diff.inDays}d';
+    return '${diff.inDays ~/ 30}mo';
+  }
+
+  Widget _placeholder(SemanticTokens t, String tab) {
+    final spec = switch (tab) {
+      'Reviews' => ('📝', 'Chưa có đánh giá', 'Hãy là người đầu tiên ghé và viết review'),
+      'Ảnh' => ('📷', 'Chưa có ảnh check-in', 'Khoe ảnh món ngon từ quán này nha'),
+      'Map' => ('🗺️', 'Bản đồ', 'Mở Google Maps để xem chỉ đường tới quán'),
+      _ => ('✨', 'Đang cập nhật', ''),
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 32, 20, 24),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(spec.$1, style: HnagType.d3),
+            const SizedBox(height: 8),
+            Text(spec.$2,
+              style: HnagType.h4.copyWith(color: t.text, fontFamily: HnagFonts.display),
+            ),
+            if (spec.$3.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(spec.$3,
+                textAlign: TextAlign.center,
+                style: HnagType.bodySm.copyWith(color: t.textMuted, fontFamily: HnagFonts.body),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _InfoCard extends StatelessWidget {

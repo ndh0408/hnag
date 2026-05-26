@@ -294,6 +294,19 @@ class HnagApi {
     }
   }
 
+  /// Cancel an order in-flight (only valid before status='delivering').
+  /// Broadcasts `order:update` to user room via the backend.
+  Future<bool> cancelOrder(String orderId) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/orders/$orderId/status'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode({'status': 'cancelled'}),
+          ).timeout(const Duration(seconds: 10)));
+      return r.statusCode == 200;
+    } catch (_) { return false; }
+  }
+
   // ─── AI feedback (learn from swipes / orders / cooks) ──────────────────
   /// Records user behavior on an AI suggestion. action ∈ view/save/skip/cook/
   /// order/dine/rate. Backend updates personalization weights.
@@ -376,6 +389,17 @@ class HnagApi {
   }
 
   // ─── Groups ──────────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> myGroups() async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) =>
+          http.get(Uri.parse('$baseUrl/v1/groups'), headers: h)
+              .timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200) return [];
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      return ((body['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+    } catch (_) { return []; }
+  }
+
   Future<Map<String, dynamic>?> createGroup(String name) async {
     final r = await AuthService.instance.authedRequest((h) => http.post(
           Uri.parse('$baseUrl/v1/groups'),
@@ -408,6 +432,126 @@ class HnagApi {
     if (r.statusCode != 200) return null;
     final data = (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
     return ((data?['tally'] as List?) ?? []).cast<int>();
+  }
+
+  /// Final result + winner for a poll. Polled lazily by the voting screen after
+  /// `closes_at` or when the user taps "Xem kết quả".
+  Future<Map<String, dynamic>?> pollResult(String groupId, String pollId) async {
+    final r = await AuthService.instance.authedRequest((h) =>
+        http.get(Uri.parse('$baseUrl/v1/groups/$groupId/polls/$pollId/result'), headers: h)
+            .timeout(const Duration(seconds: 10)));
+    if (r.statusCode != 200) return null;
+    return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+  }
+
+  Future<Map<String, dynamic>?> joinGroup(String groupId, String inviteCode) async {
+    final r = await AuthService.instance.authedRequest((h) => http.post(
+          Uri.parse('$baseUrl/v1/groups/$groupId/members'),
+          headers: {...h, 'Content-Type': 'application/json'},
+          body: jsonEncode({'inviteCode': inviteCode}),
+        ).timeout(const Duration(seconds: 10)));
+    if (r.statusCode != 200 && r.statusCode != 201) return null;
+    return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+  }
+
+  // ─── Couple Mode ─────────────────────────────────────────────────────
+  Future<Map<String, dynamic>?> coupleMe() async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) =>
+          http.get(Uri.parse('$baseUrl/v1/couple/me'), headers: h)
+              .timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200) return null;
+      return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+    } catch (_) { return null; }
+  }
+
+  Future<bool> coupleInvite(String phoneOrUsername) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/couple/invite'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode({'phoneOrUsername': phoneOrUsername}),
+          ).timeout(const Duration(seconds: 10)));
+      return r.statusCode == 200 || r.statusCode == 201;
+    } catch (_) { return false; }
+  }
+
+  // ─── Achievements / Badges (Profile Badges tab) ──────────────────────
+  Future<List<Map<String, dynamic>>> myAchievements() async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) =>
+          http.get(Uri.parse('$baseUrl/v1/challenges/achievements/me'), headers: h)
+              .timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200) return [];
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      return ((body['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+    } catch (_) { return []; }
+  }
+
+  // ─── Restaurants serving a food (Quán bán tab) ───────────────────────
+  Future<List<Map<String, dynamic>>> restaurantsServingFood(String foodId) async {
+    final uri = Uri.parse('$baseUrl/v1/foods/$foodId/restaurants');
+    return _fetchList(uri);
+  }
+
+  /// Reviews for a restaurant (Reviews tab on restaurant detail).
+  Future<List<Map<String, dynamic>>> restaurantReviews(String restaurantId, {String sort = 'recent'}) async {
+    final uri = Uri.parse('$baseUrl/v1/restaurants/$restaurantId/reviews?sort=$sort');
+    return _fetchList(uri);
+  }
+
+  /// Reviews for a food id (Profile reviews + Food Detail Bài viết tab).
+  /// Backend exposes via /v1/foods/:id/reviews if implemented; falls back to []
+  /// if endpoint not present.
+  Future<List<Map<String, dynamic>>> foodReviews(String foodId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/v1/foods/$foodId/reviews');
+      return await _fetchList(uri);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Write a food review (rating + content). Returns true on success.
+  Future<bool> writeReview({required String foodId, required int rating, required String content}) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/foods/$foodId/reviews'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode({'rating': rating, 'content': content}),
+          ).timeout(const Duration(seconds: 12)));
+      return r.statusCode == 200 || r.statusCode == 201;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ─── Comments ────────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> commentsForPost(String postId, {int page = 1}) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) =>
+          http.get(Uri.parse('$baseUrl/v1/posts/$postId/comments?page=$page'), headers: h)
+              .timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200) return [];
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      return ((body['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>?> commentOnPost(String postId, String content, {String? parentId}) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/posts/$postId/comment'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode({'content': content, if (parentId != null) 'parentId': parentId}),
+          ).timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200 && r.statusCode != 201) return null;
+      return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<List<Map<String, dynamic>>> _fetchList(Uri uri) async {

@@ -10,24 +10,59 @@
 
 ---
 
-## 🚀 Live status (2026-05-20)
+## 🚀 Live status (2026-05-27)
 
 **Deployment:** Self-host trên `ServerLinux` (Tailscale `100.100.210.85`) chạy chung với realm-* + Palworld trong cùng Docker stack riêng (network `hnag-internal`). Public access qua **Cloudflare Tunnel** (4 connections HKG region) — không expose port nào.
 
 | URL | Service | Status |
 |---|---|---|
-| https://api.tothanhthuy.cloud | NestJS backend (60+ endpoints + 6 AI endpoints) | ✅ LIVE |
+| https://api.tothanhthuy.cloud | NestJS backend (60+ endpoints + 6 AI endpoints + Socket.IO realtime) | ✅ LIVE |
 | https://api.tothanhthuy.cloud/health | Health probe (db + cache) | ✅ `{"ok":true,"db":true,"cache":true}` |
 | https://dash.tothanhthuy.cloud | Owner Dashboard (Next.js 14) | ✅ LIVE |
-| https://app.tothanhthuy.cloud | APK download + static landing | ✅ LIVE |
-| https://app.tothanhthuy.cloud/hnag-latest.apk | Android APK (signed) | ✅ Cài trên Xiaomi Redmi Note 13 Pro+ |
-| iOS app (Mapbox map + 14k quán) | Build ký + cài qua `devicectl` (`code/flutter/build-ios.example.sh`) | ✅ Cài + chạy trên iPhone Kayn |
+| https://app.tothanhthuy.cloud | APK download + static landing + pricing | ✅ LIVE |
+| https://app.tothanhthuy.cloud/hnag-latest.apk | Android APK (signed) | ✅ Cài trên Xiaomi Redmi Note 13 Pro+ + emulator x86_64 |
+| iOS app (Mapbox map + 14k quán) | Build ký + cài qua `devicectl` (`code/flutter/build-ios-and-install.sh`) | ✅ Build #15 cài + chạy trên iPhone Kayn |
 
 **Real data (thật 100%, không sinh ảo):**
 - **14.319 quán ăn THẬT toàn quốc** — cào từ **OpenStreetMap** (`code/ingestion/scrape_restaurants.py`, 63 tỉnh), chuẩn hoá về **62 tỉnh thành** (`gen_city_normalize.py`). Geo points (PostGIS) + cuisine tags + giờ mở; `nearby` trả `lat/lng`.
 - **86 món Việt** với ảnh THẬT — 60 seed (Unsplash verify) + 26 cào từ **Wikidata/Wikimedia Commons** (ảnh có license, `scrape_foods_wikipedia.py`).
-- 12 achievements, viral dish trending scores tự tính.
+- **8 posts + 12 reviews** seeded thật (`prisma/seed-social.sql`) — TikTok feed, food/restaurant Reviews tab dùng data này.
+- 12 achievements (unlock dựa trên `users.foodie_class` thật), viral dish trending scores tự tính.
 - ⏳ Ảnh từng quán (Google Places) — chờ cấu hình; data quán đã đầy đủ.
+
+### 🎨 Hi-Fi v2 design system (2026-05-22 → 27)
+
+**~30 màn hình user-facing, tất cả wired vào API thật, được audit live trên Android emulator x86_64:**
+
+| Nhóm | Màn hình | Status |
+|---|---|---|
+| **Auth** | Splash · Welcome (food card hero) · Permissions · Login (email/phone + Apple SSO) · OTP · Onboarding 8 bước · Forgot password | ✅ |
+| **Home v2** | Trang chủ (greeting · weather · stories · AI hero · trending · friends · TikTok grid) · Search (recent + AI search hero) · Notifications | ✅ |
+| **AI Decide v2** | AI Decide (6 modes: Quick/Detail/Mood/Voice/Fridge/Group · 3 sliders · location picker) · Mood Wheel (radial 8 emoji) · Voice Hà (STT/TTS vi-VN) · Card Stack (5 swipe actions + WhySkip sheet) · AI Thinking transition | ✅ |
+| **Detail v2** | Food Detail (3 tabs Công thức/Quán bán/Bài viết) · Restaurant Detail (4 tabs Menu/Reviews/Ảnh/Map · Chỉ đường/Gọi/Đặt bàn) · Cart · Checkout (3 delivery + 5 payment) · Order Tracking (WebSocket live) · Live Cooking (multi-timer + voice nav) | ✅ |
+| **Social v2** | TikTok Feed (vertical PageView · ❤️💬🔗🔖) · Comments Sheet (real fetch+post) · Group Voting (Realtime WS · medals · Reveal kết quả) · Meal Planner (21 slot · Auto-fill · Grocery export) · Late Night Mode (24h filter) | ✅ |
+| **Profile v2** | Profile (cover · foodie class 🦐→🐉 · 4 tabs Reviews/Saved/Photos/Badges) · Settings (8 sections + Theme/Language picker) · Settings & Tools sheet (14 entries) · Premium HNAG+ (3 tiers) · Couple Mode (date night) · Random Wheel (6 slices spin) · Quán gần đây + Map (OSM + Mapbox) · Fridge Scan | ✅ |
+
+**Critical bugs đã fix qua emulator testing (Android-MCP):**
+1. OTP screen double-verify race → guard `_busy + _verified` + `popUntil`
+2. Prisma Decimal serialize sang JSON là String → `_asInt/_asDouble` helpers (24+ cast sites)
+3. Backend field names (`lat/lng` vs `latitude/longitude`, `cover_image` vs `cover_url`)
+4. Order intent 400 silent fail → toast user-visible "Món này chưa có quán hỗ trợ giao"
+5. TikTok feed FK violation (foods as posts) → prefer real `/v1/feed`, fallback graceful
+6. Tools sheet không scroll → `isScrollControlled` + `SingleChildScrollView`
+7. Profile Badges hardcoded "4 unlocked" → unlock từ `foodieClass` thật
+
+**Real data verified end-to-end trên emulator (test bằng MCP Android):**
+- Login (email OTP, fetch code từ Redis) → Onboarding 8 bước → Home
+- AI Decide Đổi location picker (4 radius options)
+- Mood Wheel → AI mood-suggest → Card Stack 5 món với feedback API
+- Food Detail Cơm tấm sườn 4.74⭐ (1163 reviews) → Quán bán tab (2 quán) → Restaurant Detail (5 real reviews seeded)
+- TikTok feed @foodie_49f5a90b real post → Like POST 201 → Comment POST 201 (count 156→157)
+- Cart (3 items, 145k) → Checkout (address picker 6 presets + custom · 3 delivery types · 5 payment methods)
+- Group Voting Team lunch (4 medal cards) → Vote POST 201 → Reveal kết quả → Food Detail của winner
+- Couple Mode invite → `/v1/couple/invite` real backend
+- Late Night Mode (5 quán còn mở 24h)
+- Random Wheel spin → "🎉 Bánh mì"
 
 **AI Public endpoints (no auth, no OpenAI key needed):**
 | Endpoint | Logic | Example output |

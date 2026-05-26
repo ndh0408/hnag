@@ -1,9 +1,17 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
+
+type OrderStatus = 'intent' | 'placed' | 'cooking' | 'picking' | 'delivering' | 'done' | 'cancelled';
+
+const ALLOWED_STATUSES: OrderStatus[] = ['intent', 'placed', 'cooking', 'picking', 'delivering', 'done', 'cancelled'];
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async createIntent(userId: string, dto: { foodId: string; restaurantId?: string; preferredPartner?: string }) {
     const food = await this.prisma.foods.findUnique({ where: { id: dto.foodId } });
@@ -18,7 +26,6 @@ export class OrdersService {
       restaurant = r;
     }
     if (!restaurant) {
-      // Find a nearby restaurant serving this food (skeleton picks first menu match)
       const item = await this.prisma.menu_items.findFirst({
         where: { food_id: dto.foodId, available: true },
         include: { restaurants: { select: { id: true, delivery_links: true } } },
@@ -59,5 +66,52 @@ export class OrdersService {
       take: 20,
       skip: (page - 1) * 20,
     });
+  }
+
+  async getOrder(userId: string, orderId: string) {
+    const order = await this.prisma.orders.findUnique({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.user_id !== userId) throw new ForbiddenException();
+    return order;
+  }
+
+  /**
+   * Transition an order to a new status and broadcast `order:update` to the
+   * owner's user room over WebSocket. Used by:
+   *   - partner webhooks (Shopee/Grab/Baemin via partners.webhook controller)
+   *   - dev/QA manual triggers via POST /v1/orders/:id/status
+   * Side-effects: sets {confirmed,delivered,cancelled}_at timestamp when the
+   * status crosses that boundary.
+   */
+  async updateStatus(orderId: string, next: OrderStatus, opts?: { eta?: string; actorUserId?: string }) {
+    if (!ALLOWED_STATUSES.includes(next)) throw new BadRequestException('Invalid status');
+    const order = await this.prisma.orders.findUnique({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Order not found');
+
+    // Owner-only guard when an actor user id is provided (dev/QA path). Partner
+    // webhook path passes no actor and is authenticated by HMAC instead.
+    if (opts?.actorUserId && order.user_id !== opts.actorUserId) {
+      throw new ForbiddenException();
+    }
+
+    const data: Record<string, unknown> = { status: next };
+    const now = new Date();
+    if (next === 'cooking' && !order.confirmed_at) data.confirmed_at = now;
+    if (next === 'done' && !order.delivered_at) data.delivered_at = now;
+    if (next === 'cancelled' && !order.cancelled_at) data.cancelled_at = now;
+
+    const updated = await this.prisma.orders.update({ where: { id: orderId }, data });
+
+    if (updated.user_id) {
+      this.realtime.broadcastUser(updated.user_id, 'order:update', {
+        orderId: updated.id,
+        status: updated.status,
+        eta: opts?.eta,
+        partner: updated.partner,
+        restaurantId: updated.restaurant_id,
+        updatedAt: now.toISOString(),
+      });
+    }
+    return updated;
   }
 }

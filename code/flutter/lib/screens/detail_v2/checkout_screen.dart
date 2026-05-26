@@ -55,6 +55,62 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   String _vnd(int v) => '${v.toString().replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+(?!\d))'), (m) => '${m[1]}.')}₫';
 
+  Future<void> _pickAddress(BuildContext context) async {
+    final controller = TextEditingController(text: _address);
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final t = ctx.hnag;
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            decoration: BoxDecoration(color: t.bgRaised, borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: t.divider, borderRadius: BorderRadius.circular(2)))),
+                const SizedBox(height: 12),
+                Text('Giao tới', style: HnagType.h3.copyWith(color: t.text, fontFamily: HnagFonts.display)),
+                const SizedBox(height: 12),
+                HnagInput(
+                  controller: controller,
+                  placeholder: 'Số nhà, đường, phường, quận',
+                  leading: 'pin',
+                  textInputAction: TextInputAction.done,
+                ),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  for (final preset in const [
+                    'Q.1, TP.HCM',
+                    'Q.3, TP.HCM',
+                    'Q.7, TP.HCM',
+                    'Q. Phú Nhuận, TP.HCM',
+                    'Q. Bình Thạnh, TP.HCM',
+                    'Q. Hoàn Kiếm, Hà Nội',
+                  ])
+                    HnagChip(label: preset, onTap: () => Navigator.pop(ctx, preset)),
+                ]),
+                const SizedBox(height: 16),
+                SizedBox(width: double.infinity, child: HnagButton(
+                  label: 'Dùng địa chỉ này',
+                  variant: BtnVariant.primary,
+                  onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+                )),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null && picked.isNotEmpty) {
+      setState(() => _address = picked);
+    }
+  }
+
   Future<void> _place() async {
     setState(() => _busy = true);
     try {
@@ -87,9 +143,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               const SizedBox(height: 8),
               HnagCard(
                 padding: const EdgeInsets.all(14),
-                onTap: () {
-                  // TODO Phase 5b: hook real address picker
-                },
+                onTap: () => _pickAddress(context),
                 child: Row(
                   children: [
                     Container(

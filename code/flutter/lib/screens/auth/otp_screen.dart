@@ -37,6 +37,7 @@ class _OtpScreenState extends State<OtpScreen> {
   Timer? _timer;
   bool _busy = false;
   bool _faceId = true;
+  bool _verified = false;
   String? _error;
 
   @override
@@ -67,17 +68,26 @@ class _OtpScreenState extends State<OtpScreen> {
   Future<void> _verifyNow() async {
     final code = _ctrl.text;
     if (code.length != 6) return;
+    // Guard: don't fire concurrent verify calls (auto-on-fill + manual tap
+    // would both call backend; second one returns 401 since OTP is consumed
+    // and would overwrite the success state with a "Mã không đúng" error).
+    if (_busy || _verified) return;
     setState(() { _busy = true; _error = null; });
     try {
       final ok = await widget.onVerify(code);
       if (!ok) {
-        setState(() => _error = 'Mã không đúng. Thử lại nhé.');
+        if (mounted) setState(() => _error = 'Mã không đúng. Thử lại nhé.');
+      } else {
+        _verified = true;
+        // Pop back to the root so the StreamBuilder in _Boot can show
+        // OnboardingFlow / RootScreen unblocked by the auth navigator stack.
+        if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && !_verified) setState(() => _busy = false);
     }
   }
 

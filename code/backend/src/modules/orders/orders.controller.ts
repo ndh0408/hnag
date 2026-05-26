@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
@@ -20,5 +20,23 @@ export class OrdersController {
   @Get()
   history(@CurrentUser() u: JwtPayload, @Query('page') page?: string) {
     return this.orders.history(u.sub, page ? parseInt(page) : 1);
+  }
+
+  @Get(':id')
+  getOne(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
+    return this.orders.getOrder(u.sub, id);
+  }
+
+  // Owner-only dev/QA endpoint to advance an order's status — emits
+  // `order:update` over WebSocket to the user room so the tracking screen
+  // reacts live. Real production updates come from partner webhook handlers
+  // (see PartnersModule) that bypass this guard via HMAC.
+  @Post(':id/status')
+  updateStatus(
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: { status: 'intent' | 'placed' | 'cooking' | 'picking' | 'delivering' | 'done' | 'cancelled'; eta?: string },
+  ) {
+    return this.orders.updateStatus(id, body.status, { eta: body.eta, actorUserId: u.sub });
   }
 }

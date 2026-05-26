@@ -39,8 +39,45 @@ class _AiDecideScreenState extends State<AiDecideScreen> {
   double _hunger = 65;
   String _time = '15p';
   double _budget = 65;
-  final String _location = 'Q.3, TP.HCM · bán kính 600m';
+  int _radiusM = 600;
+  String get _location => 'Q.3, TP.HCM · bán kính ${_radiusM < 1000 ? "${_radiusM}m" : "${(_radiusM / 1000).toStringAsFixed(1)}km"}';
   bool _busy = false;
+
+  Future<void> _pickRadius(BuildContext context) async {
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final t = ctx.hnag;
+        Widget row(int m, String label) => ListTile(
+          leading: HnagIcon(_radiusM == m ? 'check' : 'pin', size: 22, color: _radiusM == m ? t.brand : t.textMuted),
+          title: Text(label, style: HnagType.bodyLg.copyWith(color: t.text, fontFamily: HnagFonts.body)),
+          onTap: () => Navigator.pop(ctx, m),
+        );
+        return Container(
+          decoration: BoxDecoration(color: t.bgRaised, borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+          padding: const EdgeInsets.fromLTRB(0, 12, 0, 24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: t.divider, borderRadius: BorderRadius.circular(2)))),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Bán kính tìm món', style: HnagType.h3.copyWith(color: t.text, fontFamily: HnagFonts.display)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            row(300, '300m — đi bộ'),
+            row(600, '600m — gần văn phòng'),
+            row(1500, '1.5km — đi xe'),
+            row(3000, '3km — quận lân cận'),
+          ]),
+        );
+      },
+    );
+    if (picked != null) setState(() => _radiusM = picked);
+  }
 
   static const _times = ['5p', '15p', '30p', '1h+'];
 
@@ -203,7 +240,7 @@ class _AiDecideScreenState extends State<AiDecideScreen> {
                                   Expanded(child: Text(_location,
                                     style: HnagType.label.copyWith(color: t.text, fontFamily: HnagFonts.body),
                                   )),
-                                  HnagButton(label: 'Đổi', variant: BtnVariant.ghost, size: BtnSize.sm, iconTrailing: 'chevR'),
+                                  HnagButton(label: 'Đổi', variant: BtnVariant.ghost, size: BtnSize.sm, iconTrailing: 'chevR', onPressed: () => _pickRadius(context)),
                                 ],
                               ),
                             ),
