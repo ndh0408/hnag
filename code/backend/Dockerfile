@@ -4,7 +4,7 @@ WORKDIR /app
 
 RUN apk add --no-cache openssl libc6-compat python3 make g++
 COPY package.json package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund --legacy-peer-deps; else npm install --no-audit --no-fund --legacy-peer-deps; fi
 
 COPY prisma ./prisma
 RUN npx prisma generate
@@ -21,7 +21,7 @@ RUN apk add --no-cache openssl libc6-compat tini
 ENV NODE_ENV=production
 
 COPY package.json package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci --omit=dev --no-audit --no-fund; else npm install --omit=dev --no-audit --no-fund; fi
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev --no-audit --no-fund --legacy-peer-deps; else npm install --omit=dev --no-audit --no-fund --legacy-peer-deps; fi
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma

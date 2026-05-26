@@ -18,6 +18,7 @@
     "db:seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
+    "@apollo/server": "^4.10.0",
     "@nestjs/apollo": "^12.2.0",
     "@nestjs/axios": "^3.0.2",
     "@nestjs/bullmq": "^10.2.0",
