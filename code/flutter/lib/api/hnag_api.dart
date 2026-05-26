@@ -165,6 +165,20 @@ class HnagApi {
     return _fetchList(Uri.parse('$baseUrl/v1/foods/$foodId/restaurants'));
   }
 
+  /// Full restaurant detail including menu_items[] and live (open/wait).
+  Future<Map<String, dynamic>?> restaurantDetail(String id) async {
+    try {
+      final r = await http.get(Uri.parse('$baseUrl/v1/restaurants/$id'))
+          .timeout(const Duration(seconds: 12));
+      if (r.statusCode != 200) return null;
+      return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
+    } catch (_) { return null; }
+  }
+
+  Future<List<Map<String, dynamic>>> restaurantMenu(String id) async {
+    return _fetchList(Uri.parse('$baseUrl/v1/restaurants/$id/menu'));
+  }
+
   // ─── Meal plan ───────────────────────────────────────────────────────
   Future<Map<String, dynamic>?> currentMealPlan() async {
     final r = await AuthService.instance.authedRequest((h) =>

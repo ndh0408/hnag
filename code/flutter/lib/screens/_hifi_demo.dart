@@ -14,6 +14,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../widgets/live_cooking.dart';
+import 'fridge_scan_screen.dart';
 
 import '../api/hnag_api.dart';
 import '../api/auth_service.dart';
@@ -674,13 +675,72 @@ class _AiDecideReal extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return home_v2.AiDecideScreen(
+      // Each mode routes to the right backend/UI:
+      //   Quick   → /v1/ai/suggest-public (default)
+      //   Detail  → same + tighter filters
+      //   Mood    → push MoodWheelScreen
+      //   Voice   → push VoiceHa screen
+      //   Fridge  → push FridgeScanScreen
+      //   Group   → push GroupVoteLauncher
+      onModeChange: (mode) {
+        Future<void> route() async {
+          switch (mode) {
+            case home_v2.AiDecideMode.mood:
+              Navigator.of(context).pushReplacement(MaterialPageRoute(
+                builder: (_) => Hifi.moodWheelDemo(context),
+              ));
+              break;
+            case home_v2.AiDecideMode.voice:
+              Navigator.of(context).pushReplacement(MaterialPageRoute(
+                builder: (_) => Hifi.voiceHaDemo(context),
+              ));
+              break;
+            case home_v2.AiDecideMode.fridge:
+              Navigator.of(context).pushReplacement(MaterialPageRoute(
+                builder: (c) => FridgeScanScreen(
+                  onScan: (_) async { throw UnimplementedError('Vision AI cho ảnh chưa bật.'); },
+                  onSuggestRecipes: (items) async {
+                    final ings = items.map((e) => e.name).toList();
+                    final recipes = await _api.aiFridgeRecipes(ings);
+                    return recipes.map((r) {
+                      final food = r['food'] as Map<String, dynamic>? ?? {};
+                      return FridgeRecipe(
+                        id: food['id'] as String? ?? '',
+                        name: food['name_vi'] as String? ?? '',
+                        timeMin: food['cook_time_min'] as int? ?? 30,
+                        uses: ((r['uses'] as List?) ?? []).cast<String>(),
+                        missing: ((r['missing'] as List?) ?? []).cast<String>(),
+                        tip: r['tip'] as String? ?? '',
+                      );
+                    }).toList();
+                  },
+                ),
+              ));
+              break;
+            case home_v2.AiDecideMode.group:
+              Navigator.of(context).pushReplacement(MaterialPageRoute(
+                builder: (_) => Hifi.groupVotingDemo(context),
+              ));
+              break;
+            case home_v2.AiDecideMode.quick:
+            case home_v2.AiDecideMode.detail:
+              // No nav; mode tile is selected on Decide screen
+              break;
+          }
+        }
+        unawaited(route());
+      },
       onDecide: (session) async {
-        // hunger/budget/time inform the AI suggest call.
-        // The endpoint we have today is `/v1/ai/suggest` — pass budget.
         final budgetVnd = (session.budget * 1000).round();
-        final suggestions = await _api.aiSuggest(limit: 5);
+        // Quick + Detail: /v1/ai/suggest-public with budget filter.
+        final budgetCap = session.mode == home_v2.AiDecideMode.detail
+            ? budgetVnd  // narrower cap for Detail mode
+            : null;
+        final suggestions = await _api.aiSuggest(
+          limit: 5,
+          budgetMax: budgetCap,
+        );
         if (!context.mounted) return;
-        // Navigate to card stack with results
         final cards = suggestions.map<home_v2.FoodCardLargeData>((s) => home_v2.FoodCardLargeData(
           id: (s['id'] as String?) ?? '',
           name: (s['name_vi'] as String?) ?? '',
@@ -991,22 +1051,45 @@ class _RestaurantDetailRealState extends State<_RestaurantDetailReal> {
         return;
       }
       final first = list.first;
+      // Fetch the FULL restaurant detail (with menu_items + live status)
+      final detail = await _api.restaurantDetail(first['id'] as String);
+      final menuRaw = (detail?['menu_items'] as List?) ?? const [];
+      // Group menu items by category.
+      final byCategory = <String, List<detail_v2.MenuItemV2>>{};
+      for (final raw in menuRaw) {
+        if (raw is! Map) continue;
+        final m = raw as Map<String, dynamic>;
+        final cat = (m['category'] as String?) ?? 'Khác';
+        byCategory.putIfAbsent(cat, () => []);
+        byCategory[cat]!.add(detail_v2.MenuItemV2(
+          id: (m['id'] as String?) ?? '',
+          name: (m['name'] as String?) ?? '',
+          description: (m['description'] as String?) ?? '',
+          priceVnd: (m['price_vnd'] as int?) ?? 0,
+          foodSlug: 'lau',
+          imageUrl: m['image_url'] as String?,
+          tag: (m['is_bestseller'] as bool?) == true ? 'BESTSELLER' : null,
+        ));
+      }
+      final categories = byCategory.entries
+          .map((e) => detail_v2.MenuCategoryV2(name: e.key, items: e.value))
+          .toList();
       setState(() => _r = detail_v2.RestaurantDetailDataV2(
         id: (first['id'] as String?) ?? '',
-        name: (first['name'] as String?) ?? '',
-        imageUrl: first['cover_url'] as String?,
+        name: (detail?['name'] as String?) ?? (first['name'] as String?) ?? '',
+        imageUrl: (detail?['cover_url'] as String?) ?? (first['cover_url'] as String?),
         foodSlug: 'lau',
-        rating: ((first['rating_avg'] as num?) ?? 4.5).toDouble(),
-        reviewCount: (first['rating_count'] as int?) ?? 0,
-        priceRange: (first['price_range'] as String?) ?? '50k–150k',
-        openNow: (first['open_now'] as bool?) ?? true,
+        rating: ((detail?['rating_avg'] as num?) ?? (first['rating_avg'] as num?) ?? 4.5).toDouble(),
+        reviewCount: ((detail?['rating_count'] as int?) ?? (first['rating_count'] as int?)) ?? 0,
+        priceRange: (detail?['price_range'] as String?) ?? '50k–150k',
+        openNow: (detail?['restaurant_live']?['is_open'] as bool?) ?? (first['open_now'] as bool?) ?? true,
         distance: '${((first['distance_m'] as num?) ?? 1200).toInt()}m',
-        hoursLabel: (first['hours_label'] as String?) ?? '10–22h',
+        hoursLabel: (detail?['hours_label'] as String?) ?? '10–22h',
         closingNote: 'đóng cửa 22:00',
         crowdLabel: 'đông vừa',
-        crowdLevel: '~30%',
-        verified: (first['is_verified'] as bool?) ?? false,
-        menu: const [],
+        crowdLevel: '${((detail?['restaurant_live']?['wait_minutes'] as int?) ?? 15)}p chờ',
+        verified: (detail?['is_verified'] as bool?) ?? (first['is_verified'] as bool?) ?? false,
+        menu: categories,
       ));
     } catch (e) {
       setState(() => _error = e.toString());
