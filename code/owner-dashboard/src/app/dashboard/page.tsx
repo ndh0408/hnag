@@ -70,10 +70,10 @@ export default async function DashboardPage() {
               endpoint isn't deployed yet. Deltas are still placeholder.
               TODO: have the backend return period-over-period deltas. */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Đơn hôm nay"   value={ordersToday}  delta="+12%" deltaPositive />
-            <StatCard label="Doanh thu"     value={revenueToday} delta="+8%"  deltaPositive />
-            <StatCard label="Rating"        value={rating}       delta="+0.1" deltaPositive />
-            <StatCard label="Views profile" value={profileViews} delta="-3%" />
+            <StatCard label="Đơn hôm nay"   value={ordersToday}  delta="+12% hôm qua" deltaPositive icon="package" color="brand" />
+            <StatCard label="Doanh thu"     value={revenueToday} delta="+8%"          deltaPositive icon="wallet"  color="basil" />
+            <StatCard label="Rating"        value={rating}       sub="★"             delta="+0.1 (14 review mới)" deltaPositive icon="star" color="warn" />
+            <StatCard label="Views profile" value={profileViews} delta="-3%"                       icon="eye"     color="info" />
           </div>
 
           {/* Live orders + reviews */}

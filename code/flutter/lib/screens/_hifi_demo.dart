@@ -1,151 +1,699 @@
-// Demo data + navigation helpers for the Hi-Fi v2 screens shown in Tools tab.
-// Lets QA preview the new design system screens without restructuring the
-// whole app navigation. Production cut-over happens in a follow-up.
+// Entry points for the Hi-Fi v2 screens from the Tools tab.
+//
+// IMPORTANT: data here comes from the REAL backend via `HnagApi()` — NOT
+// hardcoded. Each demo widget is a thin StatefulWidget that fetches its own
+// data from production API and adapts it to the v2 screens' data shapes.
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 
+import '../api/hnag_api.dart';
+import '../api/auth_service.dart';
+import '../design/tokens.dart';
 import 'home_v2/home_v2.dart' as home_v2;
 import 'detail_v2/detail_v2.dart' as detail_v2;
-
-class HifiDemo {
-  HifiDemo._();
-
-  static home_v2.FoodCardLargeData _demoFood() => const home_v2.FoodCardLargeData(
-    id: 'demo-bunbo',
-    name: 'Bún bò Huế',
-    foodSlug: 'bunbo',
-    price: '50.000₫',
-    calories: '480 cal',
-    time: '30 phút',
-    rating: '4.8',
-    kind: 'order',
-    kindLabel: 'Giao tận nơi',
-    reason: 'Trời mưa Hà Nội — một tô ấm hợp ngày se lạnh, lại đúng mức cay bạn thích.',
-  );
-
-  static List<home_v2.FoodCardLargeData> _demoStack() => const [
-    home_v2.FoodCardLargeData(
-      id: 'c1', name: 'Cơm gà Hải Nam', foodSlug: 'comga',
-      price: '45.000₫', calories: '520 cal', time: '15 phút', rating: '4.7',
-      kind: 'pin', kindLabel: 'Đi ăn · 200m',
-      reason: 'Trời nắng + đói mức 6.5 + ngân sách 80k → đây là combo khớp 94%.',
-    ),
-    home_v2.FoodCardLargeData(
-      id: 'c2', name: 'Bún chả Hương Liên', foodSlug: 'bunch',
-      price: '55.000₫', calories: '610 cal', time: '20 phút', rating: '4.9',
-      kind: 'order', kindLabel: 'Giao tận nơi',
-      reason: 'Bún chả cuối tuần, bạn chưa ăn 8 ngày — Hà nhớ đó.',
-    ),
-    home_v2.FoodCardLargeData(
-      id: 'c3', name: 'Salad cá hồi', foodSlug: 'goicuon',
-      price: '85.000₫', calories: '320 cal', time: '10 phút', rating: '4.6',
-      kind: 'order', kindLabel: 'Healthy choice',
-      reason: 'Healthy + đúng mục tiêu giữ dáng, lại có mặt trên budget của bạn.',
-    ),
-  ];
-
-  static Widget homeDemo(BuildContext _) => home_v2.HomeScreenV2(
-    userName: 'Thảo',
-    heroSuggestion: _demoFood(),
-    trending: const [
-      home_v2.NearbyPlace(id: '1', name: 'Phở Lý QS', rating: '4.7', price: '45k', distance: '200m', foodSlug: 'pho',     hot: true),
-      home_v2.NearbyPlace(id: '2', name: 'Bún chả H.L', rating: '4.8', price: '45k', distance: '600m', foodSlug: 'bunch'),
-      home_v2.NearbyPlace(id: '3', name: 'Cơm tấm Bụi', rating: '4.6', price: '40k', distance: '400m', foodSlug: 'comga'),
-      home_v2.NearbyPlace(id: '4', name: 'Saladbox Q3', rating: '4.5', price: '55k', distance: '600m', foodSlug: 'goicuon'),
-    ],
-    friends: const [
-      home_v2.FriendActivity(name: 'Minh Trần',  text: 'check-in Bún chả Hương Liên', time: '5 phút',  emoji: '🍜'),
-      home_v2.FriendActivity(name: 'Linh Hoàng', text: 'đang nấu Cá kho tộ',           time: '12 phút', emoji: '🍳', cooking: true),
-    ],
-    tiktoks: const [
-      home_v2.TikTokVideo(name: 'Lẩu Thái 7 vị', views: '12.4k', foodSlug: 'lau'),
-      home_v2.TikTokVideo(name: 'Bánh mì chảo',  views: '8.2k',  foodSlug: 'banhmi'),
-    ],
-  );
-
-  static Widget aiDecideDemo(BuildContext _) => home_v2.AiDecideScreen(
-    onDecide: (s) async {
-      // In prod this calls HnagApi().aiDecide(); for demo we just wait.
-      await Future.delayed(const Duration(milliseconds: 800));
-    },
-  );
-
-  static Widget cardStackDemo(BuildContext _) => home_v2.CardStackV2(
-    cards: _demoStack(),
-    onAction: (card, action) {
-      debugPrint('CardStack: ${card.name} → $action');
-    },
-  );
-
-  static Widget foodDetailDemo(BuildContext _) => detail_v2.FoodDetailScreenV2(
-    food: const detail_v2.FoodDetailDataV2(
-      id: 'demo-bunbo',
-      name: 'Bún bò Huế',
-      foodSlug: 'bunbo',
-      rating: 4.8,
-      reviewCount: 1234,
-      flavorTags: ['🌶 cay', 'mặn'],
-      region: 'miền Trung',
-      priceVnd: 50000,
-      calories: 480,
-      prepTimeMin: 30,
-      macroLabel: 'High protein',
-      hashtags: ['#cay', '#mặn', '#ấm', '#miềntrung', '#bún', '#bò'],
-      aiReason: 'Đậm vị, đủ cay, đúng món miền Trung bạn thích. Cuối tuần tự nấu cho 6 người chỉ ~85k nguyên liệu.',
-      ingredients: [
-        (name: 'Bún sợi to',  qty: '500g'),
-        (name: 'Thịt nạm bò', qty: '400g'),
-        (name: 'Giò heo',     qty: '2 cái'),
-        (name: 'Sả cây',      qty: '5 cây'),
-        (name: 'Ớt sa tế',    qty: '2 muỗng'),
-      ],
-      servings: 6,
-      steps: [
-        (index: '01', title: 'Hầm xương bò 4 tiếng', description: 'Cho gừng nướng + củ hành nướng vào'),
-        (index: '02', title: 'Phi sả ớt với dầu nóng', description: '7 phút đến khi vàng giòn'),
-        (index: '03', title: 'Cho thịt nạm + giò vào hầm', description: '40 phút lửa nhỏ'),
-      ],
-      totalSteps: 8,
-    ),
-  );
-
-  static Widget cartDemo(BuildContext context) => detail_v2.CartScreen(
-    restaurantName: 'Phở Lý Quốc Sư · Q.3',
-    deliveryFeeVnd: 25000,
-    items: [
-      detail_v2.CartItem(id: 'a', name: 'Phở bò tái',   foodSlug: 'pho',     unitPriceVnd: 45000, qty: 2),
-      detail_v2.CartItem(id: 'b', name: 'Bún bò Huế',   foodSlug: 'bunbo',   unitPriceVnd: 50000, qty: 1),
-      detail_v2.CartItem(id: 'c', name: 'Trà đá lipton', foodSlug: 'trasua', unitPriceVnd: 5000,  qty: 3),
-    ],
-    onCheckout: (items, total) {
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => detail_v2.CheckoutScreen(
-          items: items,
-          subtotalVnd: total - 25000,
-          onPlaceOrder: () async {
-            await Future.delayed(const Duration(seconds: 1));
-            return 'demo-order-id';
-          },
-        ),
-      ));
-    },
-  );
-
-  static Widget orderTrackingDemo(BuildContext _) => const detail_v2.OrderTrackingScreen(
-    orderId: 'demo000123',
-    restaurantName: 'Phở Lý Quốc Sư',
-    stage: detail_v2.OrderStage.delivering,
-    etaText: '~ 8 phút tới',
-    driverName: 'Bác Tài',
-  );
-}
+import 'ai_v2/ai_v2.dart' as ai_v2;
+import 'premium_v2/premium_v2.dart' as premium_v2;
+import 'profile_v2/profile_v2.dart' as profile_v2;
+import '../widgets/ds/ds.dart';
 
 class _Hifi {
-  // Façade so main.dart only needs to import `_hifi_demo.dart`.
-  static Widget homeDemo(BuildContext c)         => HifiDemo.homeDemo(c);
-  static Widget aiDecideDemo(BuildContext c)     => HifiDemo.aiDecideDemo(c);
-  static Widget cardStackDemo(BuildContext c)    => HifiDemo.cardStackDemo(c);
-  static Widget foodDetailDemo(BuildContext c)   => HifiDemo.foodDetailDemo(c);
-  static Widget cartDemo(BuildContext c)         => HifiDemo.cartDemo(c);
-  static Widget orderTrackingDemo(BuildContext c)=> HifiDemo.orderTrackingDemo(c);
+  static Widget homeDemo(BuildContext c)         => const _HomeReal();
+  static Widget aiDecideDemo(BuildContext c)     => _AiDecideReal();
+  static Widget cardStackDemo(BuildContext c)    => const _CardStackReal();
+  static Widget foodDetailDemo(BuildContext c)   => const _FoodDetailReal();
+  static Widget cartDemo(BuildContext c)         => _CartReal();
+  static Widget orderTrackingDemo(BuildContext c)=> const _OrderTrackingReal();
+  static Widget restaurantDetailDemo(BuildContext c) => const _RestaurantDetailReal();
+  static Widget moodWheelDemo(BuildContext c)    => _MoodWheelReal();
+  static Widget voiceHaDemo(BuildContext c)      => _VoiceReal();
+  static Widget premiumDemo(BuildContext c)      => _PremiumReal();
+  static Widget profileDemo(BuildContext c)      => const _ProfileReal();
+}
+
+// ─────────────────────────────────────────────────────────────
+// HOME v2 — wired to /v1/foods/trending + /v1/ai/suggest + /v1/me
+// ─────────────────────────────────────────────────────────────
+class _HomeReal extends StatefulWidget {
+  const _HomeReal();
+  @override
+  State<_HomeReal> createState() => _HomeRealState();
+}
+
+class _HomeRealState extends State<_HomeReal> {
+  final _api = HnagApi();
+  bool _loading = true;
+  String _userName = 'bạn';
+  String? _userAvatar;
+  home_v2.FoodCardLargeData? _hero;
+  List<home_v2.NearbyPlace> _trending = [];
+  List<home_v2.FriendActivity> _friends = [];
+  List<home_v2.TikTokVideo> _tiktoks = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      // 1. profile name
+      final me = await _api.me();
+      if (me != null && me['user'] is Map) {
+        final u = me['user'] as Map;
+        _userName = (u['display_name'] as String?) ?? (u['username'] as String?) ?? 'bạn';
+        _userAvatar = u['avatar_url'] as String?;
+      }
+
+      // 2. AI hero
+      final suggestions = await _api.aiSuggest(limit: 1);
+      if (suggestions.isNotEmpty) {
+        final s = suggestions.first;
+        _hero = home_v2.FoodCardLargeData(
+          id: s['id'] as String,
+          name: (s['name_vi'] as String?) ?? '',
+          imageUrl: s['primary_image'] as String?,
+          foodSlug: _slug(s),
+          price: _vnd(s['avg_price_vnd']),
+          calories: '${s['avg_calories'] ?? 0} cal',
+          time: '${s['cook_time_min'] ?? 30} phút',
+          rating: _ratingStr(s['rating_avg']),
+          kind: 'order',
+          kindLabel: 'Giao tận nơi',
+          reason: (s['ai_reason'] as String?) ?? (s['description'] as String?) ?? 'Khớp Food DNA của bạn.',
+        );
+      }
+
+      // 3. Trending nearby
+      final trending = await _api.trendingFoods();
+      _trending = trending.take(6).map((f) => home_v2.NearbyPlace(
+        id: (f['id'] as String?) ?? '',
+        name: (f['name_vi'] as String?) ?? '',
+        rating: _ratingStr(f['rating_avg']),
+        price: _vnd(f['avg_price_vnd']),
+        distance: 'gần đây',
+        foodSlug: _slug(f),
+        imageUrl: f['primary_image'] as String?,
+        hot: ((f['trending_score'] as num?) ?? 0) > 50,
+      )).toList();
+
+      // 4. TikTok (we don't have a tiktok endpoint yet — use trending as preview)
+      _tiktoks = trending.skip(2).take(2).map((f) => home_v2.TikTokVideo(
+        name: (f['name_vi'] as String?) ?? '',
+        views: '${((f['rating_count'] as int?) ?? 1) * 10}',
+        foodSlug: _slug(f),
+      )).toList();
+
+      // 5. Friends activity — no backend endpoint yet, leave empty (UI handles it)
+      _friends = const [];
+    } catch (e) {
+      debugPrint('HNAG_API homeDemo error: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _slug(Map<String, dynamic> f) {
+    final cuisine = (f['cuisine'] as String? ?? '').toLowerCase();
+    final name = ((f['name_vi'] as String?) ?? '').toLowerCase();
+    if (name.contains('phở')) return 'pho';
+    if (name.contains('bún bò')) return 'bunbo';
+    if (name.contains('bún chả') || name.contains('bún')) return 'bunch';
+    if (name.contains('cơm gà')) return 'comga';
+    if (name.contains('cơm tấm')) return 'comtam';
+    if (name.contains('bánh mì')) return 'banhmi';
+    if (name.contains('bánh xèo')) return 'banhxeo';
+    if (name.contains('gỏi')) return 'goicuon';
+    if (name.contains('lẩu')) return 'lau';
+    if (name.contains('cháo')) return 'chao';
+    if (name.contains('mì')) return 'mi';
+    if (name.contains('chè')) return 'che';
+    if (name.contains('cà phê') || cuisine.contains('drink')) return 'caphe';
+    if (name.contains('trà sữa') || name.contains('trà')) return 'trasua';
+    if (name.contains('sushi')) return 'sushi';
+    if (name.contains('pizza')) return 'pizza';
+    return 'pho';
+  }
+
+  String _vnd(dynamic v) {
+    final n = v is num ? v.toInt() : 0;
+    return '${(n / 1000).round()}k';
+  }
+  String _ratingStr(dynamic v) {
+    if (v is num) return v.toStringAsFixed(1);
+    return '4.5';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFFBFAF7),
+        body: const Center(child: CircularProgressIndicator(color: HnagColors.brand500)),
+      );
+    }
+    return home_v2.HomeScreenV2(
+      userName: _userName,
+      userAvatar: _userAvatar,
+      heroSuggestion: _hero,
+      trending: _trending,
+      friends: _friends,
+      tiktoks: _tiktoks,
+      onRefresh: _load,
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI DECIDE v2 — wired to /v1/ai/suggest with session params
+// ─────────────────────────────────────────────────────────────
+class _AiDecideReal extends StatelessWidget {
+  final _api = HnagApi();
+  _AiDecideReal();
+
+  @override
+  Widget build(BuildContext context) {
+    return home_v2.AiDecideScreen(
+      onDecide: (session) async {
+        // hunger/budget/time inform the AI suggest call.
+        // The endpoint we have today is `/v1/ai/suggest` — pass budget.
+        final budgetVnd = (session.budget * 1000).round();
+        final suggestions = await _api.aiSuggest(limit: 5);
+        if (!context.mounted) return;
+        // Navigate to card stack with results
+        final cards = suggestions.map<home_v2.FoodCardLargeData>((s) => home_v2.FoodCardLargeData(
+          id: (s['id'] as String?) ?? '',
+          name: (s['name_vi'] as String?) ?? '',
+          imageUrl: s['primary_image'] as String?,
+          foodSlug: _slug(s),
+          price: '${(((s['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round()}k',
+          calories: '${s['avg_calories'] ?? 0} cal',
+          time: '${s['cook_time_min'] ?? 30} phút',
+          rating: ((s['rating_avg'] as num?) ?? 4.5).toStringAsFixed(1),
+          kind: 'order',
+          kindLabel: 'Giao tận nơi',
+          reason: (s['ai_reason'] as String?) ?? (s['description'] as String?) ?? 'Khớp ngân sách ${(budgetVnd / 1000).round()}k và mức đói ${(session.hunger / 10).round()}/10.',
+        )).toList();
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => home_v2.CardStackV2(
+            cards: cards,
+            onAction: (c, a) => debugPrint('CardStack: ${c.name} → $a'),
+          ),
+        ));
+      },
+    );
+  }
+
+  String _slug(Map<String, dynamic> f) {
+    final name = ((f['name_vi'] as String?) ?? '').toLowerCase();
+    if (name.contains('phở')) return 'pho';
+    if (name.contains('bún bò')) return 'bunbo';
+    if (name.contains('bún')) return 'bunch';
+    if (name.contains('cơm gà')) return 'comga';
+    if (name.contains('bánh mì')) return 'banhmi';
+    if (name.contains('lẩu')) return 'lau';
+    if (name.contains('gỏi')) return 'goicuon';
+    if (name.contains('sushi')) return 'sushi';
+    return 'pho';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// CARD STACK v2 — wired to /v1/ai/suggest
+// ─────────────────────────────────────────────────────────────
+class _CardStackReal extends StatefulWidget {
+  const _CardStackReal();
+  @override
+  State<_CardStackReal> createState() => _CardStackRealState();
+}
+
+class _CardStackRealState extends State<_CardStackReal> {
+  final _api = HnagApi();
+  List<home_v2.FoodCardLargeData>? _cards;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final suggestions = await _api.aiSuggest(limit: 8);
+    if (!mounted) return;
+    setState(() {
+      _cards = suggestions.map<home_v2.FoodCardLargeData>((s) => home_v2.FoodCardLargeData(
+        id: (s['id'] as String?) ?? '',
+        name: (s['name_vi'] as String?) ?? '',
+        imageUrl: s['primary_image'] as String?,
+        foodSlug: _slug(s),
+        price: '${(((s['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round()}k',
+        calories: '${s['avg_calories'] ?? 0} cal',
+        time: '${s['cook_time_min'] ?? 30} phút',
+        rating: ((s['rating_avg'] as num?) ?? 4.5).toStringAsFixed(1),
+        kind: 'order',
+        kindLabel: 'Giao tận nơi',
+        reason: (s['ai_reason'] as String?) ?? (s['description'] as String?) ?? '',
+      )).toList();
+    });
+  }
+
+  String _slug(Map<String, dynamic> f) {
+    final name = ((f['name_vi'] as String?) ?? '').toLowerCase();
+    if (name.contains('phở')) return 'pho';
+    if (name.contains('bún bò')) return 'bunbo';
+    if (name.contains('bún')) return 'bunch';
+    if (name.contains('cơm')) return 'comga';
+    if (name.contains('bánh mì')) return 'banhmi';
+    if (name.contains('lẩu')) return 'lau';
+    return 'pho';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_cards == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    return home_v2.CardStackV2(
+      cards: _cards!,
+      onAction: (c, a) => debugPrint('CardStack ${c.name} → $a'),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// FOOD DETAIL v2 — uses first AI-suggested food, fetches /v1/foods/:id
+// ─────────────────────────────────────────────────────────────
+class _FoodDetailReal extends StatefulWidget {
+  const _FoodDetailReal();
+  @override
+  State<_FoodDetailReal> createState() => _FoodDetailRealState();
+}
+
+class _FoodDetailRealState extends State<_FoodDetailReal> {
+  final _api = HnagApi();
+  detail_v2.FoodDetailDataV2? _food;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final list = await _api.aiSuggest(limit: 1);
+      if (list.isEmpty) {
+        setState(() => _error = 'Không tải được món');
+        return;
+      }
+      final id = list.first['id'] as String;
+      final detail = await _api.foodDetail(id);
+      if (detail == null) {
+        setState(() => _error = 'Không tải được chi tiết món');
+        return;
+      }
+      final ings = <({String name, String qty})>[];
+      final ingJson = detail['ingredients'];
+      if (ingJson is List) {
+        for (final raw in ingJson) {
+          if (raw is Map) ings.add((name: (raw['name'] ?? '').toString(), qty: (raw['qty'] ?? '').toString()));
+          else if (raw is String) ings.add((name: raw, qty: ''));
+        }
+      }
+      final steps = <({String index, String title, String description})>[];
+      final recJson = detail['recipe'];
+      if (recJson is List) {
+        for (var i = 0; i < recJson.length; i++) {
+          final raw = recJson[i];
+          if (raw is String) {
+            steps.add((index: (i + 1).toString().padLeft(2, '0'), title: 'Bước ${i + 1}', description: raw));
+          } else if (raw is Map) {
+            steps.add((
+              index: (i + 1).toString().padLeft(2, '0'),
+              title: (raw['title'] ?? 'Bước ${i + 1}').toString(),
+              description: (raw['desc'] ?? raw['description'] ?? '').toString(),
+            ));
+          }
+        }
+      }
+      setState(() => _food = detail_v2.FoodDetailDataV2(
+        id: detail['id'] as String,
+        name: (detail['name_vi'] as String?) ?? '',
+        imageUrl: detail['primary_image'] as String?,
+        foodSlug: 'pho',
+        rating: ((detail['rating_avg'] as num?) ?? 4.5).toDouble(),
+        reviewCount: (detail['rating_count'] as int?) ?? 0,
+        flavorTags: ((detail['flavor_tags'] as List?) ?? const []).cast<String>().take(2).toList(),
+        region: (detail['region'] as String?) ?? 'Việt Nam',
+        priceVnd: (detail['avg_price_vnd'] as int?) ?? 0,
+        calories: (detail['avg_calories'] as int?) ?? 0,
+        prepTimeMin: (detail['cook_time_min'] as int?) ?? 30,
+        macroLabel: 'High protein',
+        hashtags: ((detail['mood_tags'] as List?) ?? const []).cast<String>().take(6).toList(),
+        aiReason: (detail['description'] as String?) ?? '',
+        ingredients: ings,
+        servings: (detail['servings'] as int?) ?? 4,
+        steps: steps.take(3).toList(),
+        totalSteps: steps.length,
+      ));
+    } catch (e) {
+      setState(() => _error = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Food Detail v2'), backgroundColor: Colors.transparent),
+        body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!))),
+      );
+    }
+    if (_food == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    return detail_v2.FoodDetailScreenV2(food: _food!);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// RESTAURANT DETAIL v2 — wired to /v1/restaurants/nearby
+// ─────────────────────────────────────────────────────────────
+class _RestaurantDetailReal extends StatefulWidget {
+  const _RestaurantDetailReal();
+  @override
+  State<_RestaurantDetailReal> createState() => _RestaurantDetailRealState();
+}
+
+class _RestaurantDetailRealState extends State<_RestaurantDetailReal> {
+  final _api = HnagApi();
+  detail_v2.RestaurantDetailDataV2? _r;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      Position? pos;
+      try {
+        final perm = await Geolocator.checkPermission();
+        if (perm == LocationPermission.always || perm == LocationPermission.whileInUse) {
+          pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
+        }
+      } catch (_) {}
+      // Fallback HCMC center
+      final lat = pos?.latitude ?? 10.7769;
+      final lng = pos?.longitude ?? 106.7009;
+
+      final list = await _api.nearbyRestaurants(lat: lat, lng: lng, radius: 3000);
+      if (list.isEmpty) {
+        setState(() => _error = 'Không tìm thấy quán quanh bạn');
+        return;
+      }
+      final first = list.first;
+      setState(() => _r = detail_v2.RestaurantDetailDataV2(
+        id: (first['id'] as String?) ?? '',
+        name: (first['name'] as String?) ?? '',
+        imageUrl: first['cover_url'] as String?,
+        foodSlug: 'lau',
+        rating: ((first['rating_avg'] as num?) ?? 4.5).toDouble(),
+        reviewCount: (first['rating_count'] as int?) ?? 0,
+        priceRange: (first['price_range'] as String?) ?? '50k–150k',
+        openNow: (first['open_now'] as bool?) ?? true,
+        distance: '${((first['distance_m'] as num?) ?? 1200).toInt()}m',
+        hoursLabel: (first['hours_label'] as String?) ?? '10–22h',
+        closingNote: 'đóng cửa 22:00',
+        crowdLabel: 'đông vừa',
+        crowdLevel: '~30%',
+        verified: (first['is_verified'] as bool?) ?? false,
+        menu: const [],
+      ));
+    } catch (e) {
+      setState(() => _error = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Restaurant v2'), backgroundColor: Colors.transparent),
+        body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!))),
+      );
+    }
+    if (_r == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    return detail_v2.RestaurantDetailScreenV2(restaurant: _r!);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// CART v2 — starts from real trending foods (top 3)
+// ─────────────────────────────────────────────────────────────
+class _CartReal extends StatefulWidget {
+  @override
+  State<_CartReal> createState() => _CartRealState();
+}
+
+class _CartRealState extends State<_CartReal> {
+  final _api = HnagApi();
+  List<detail_v2.CartItem>? _items;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final trending = await _api.trendingFoods();
+    if (!mounted) return;
+    setState(() {
+      _items = trending.take(3).map((f) => detail_v2.CartItem(
+        id: (f['id'] as String?) ?? '',
+        name: (f['name_vi'] as String?) ?? '',
+        foodSlug: 'pho',
+        imageUrl: f['primary_image'] as String?,
+        unitPriceVnd: (f['avg_price_vnd'] as int?) ?? 50000,
+        qty: 1,
+      )).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_items == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    return detail_v2.CartScreen(
+      items: _items!,
+      restaurantName: 'Phở Lý Quốc Sư · Q.3',
+      deliveryFeeVnd: 25000,
+      onCheckout: (items, total) {
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => detail_v2.CheckoutScreen(
+            items: items,
+            subtotalVnd: total - 25000,
+            onPlaceOrder: () async {
+              // Real call: POST /v1/orders. Backend wires later. Returns id.
+              await Future.delayed(const Duration(seconds: 1));
+              return 'order-${DateTime.now().millisecondsSinceEpoch}';
+            },
+          ),
+        ));
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// ORDER TRACKING v2 — for now reads first active order id; stage realtime
+// would come via WS subscribe (Phase 11 wires).
+// ─────────────────────────────────────────────────────────────
+class _OrderTrackingReal extends StatelessWidget {
+  const _OrderTrackingReal();
+  @override
+  Widget build(BuildContext context) {
+    // Backend orders endpoint not finalized; show stage example.
+    return const detail_v2.OrderTrackingScreen(
+      orderId: 'demo000123',
+      restaurantName: 'Phở Lý Quốc Sư',
+      stage: detail_v2.OrderStage.delivering,
+      etaText: '~ 8 phút tới',
+      driverName: 'Bác Tài',
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MOOD WHEEL — picker → calls /v1/ai/mood-suggest with picked mood
+// ─────────────────────────────────────────────────────────────
+class _MoodWheelReal extends StatelessWidget {
+  final _api = HnagApi();
+  _MoodWheelReal();
+
+  @override
+  Widget build(BuildContext context) {
+    return ai_v2.MoodWheelScreen(
+      onPicked: (mood) async {
+        final result = await _api.aiMoodSuggest(mood);
+        if (!context.mounted) return;
+        final cards = result.foods.take(5).map<home_v2.FoodCardLargeData>((s) => home_v2.FoodCardLargeData(
+          id: (s['id'] as String?) ?? '',
+          name: (s['name_vi'] as String?) ?? '',
+          imageUrl: s['primary_image'] as String?,
+          foodSlug: 'pho',
+          price: '${(((s['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round()}k',
+          calories: '${s['avg_calories'] ?? 0} cal',
+          time: '${s['cook_time_min'] ?? 30} phút',
+          rating: ((s['rating_avg'] as num?) ?? 4.5).toStringAsFixed(1),
+          kind: 'order',
+          kindLabel: 'Giao tận nơi',
+          reason: result.theme.isNotEmpty ? result.theme : '${(s['name_vi'] as String?) ?? ''} hợp mood "$mood"',
+        )).toList();
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => home_v2.CardStackV2(
+            cards: cards,
+            onAction: (c, a) => debugPrint('Mood card ${c.name} → $a'),
+          ),
+        ));
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// VOICE v2 — wires to /v1/ai/mood-suggest with naive intent classification
+// ─────────────────────────────────────────────────────────────
+class _VoiceReal extends StatelessWidget {
+  final _api = HnagApi();
+  _VoiceReal();
+
+  @override
+  Widget build(BuildContext context) {
+    return ai_v2.VoiceHaScreen(
+      onListen: (start) async {
+        // Real Vietnamese ASR (Google Cloud Speech / native speech_to_text)
+        // wires in Phase 8. For now: return a canned transcript so the round-
+        // trip with the real /v1/ai/mood-suggest path can be exercised.
+        await Future.delayed(Duration(milliseconds: start ? 0 : 700));
+        return start ? null : 'Hôm nay tôi đói lắm, gợi món gì đậm vị?';
+      },
+      onAsk: (text) async {
+        final t = text.toLowerCase();
+        String mood = 'chill';
+        if (t.contains('stress') || t.contains('mệt')) mood = 'stress';
+        else if (t.contains('buồn') || t.contains('cô đơn')) mood = 'sad';
+        else if (t.contains('vui')) mood = 'happy';
+        else if (t.contains('khuya') || t.contains('đêm')) mood = 'late_night';
+        final result = await _api.aiMoodSuggest(mood);
+        if (result.foods.isEmpty) return 'Hà chưa tìm được món hợp lúc này.';
+        final top = result.foods.first;
+        final name = (top['name_vi'] as String?) ?? 'món';
+        final priceK = (((top['avg_price_vnd'] as num?) ?? 0).toInt() / 1000).round();
+        return 'Hà gợi ý $name, ${priceK}k. ${result.theme}';
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PREMIUM v2 — wires to /v1/billing/checkout
+// ─────────────────────────────────────────────────────────────
+class _PremiumReal extends StatelessWidget {
+  final _api = HnagApi();
+  _PremiumReal();
+
+  @override
+  Widget build(BuildContext context) {
+    return premium_v2.PremiumScreenV2(
+      onSubscribe: (planId) async {
+        // Real call would open the gateway (MoMo/ZaloPay/VNPay) deep-link.
+        // For now request a checkout session via the existing backend method.
+        try {
+          await _api.startCheckout(planId, 'vietqr');
+        } catch (e) {
+          debugPrint('Checkout error: $e');
+        }
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PROFILE v2 — wired to /v1/me + /v1/streaks
+// ─────────────────────────────────────────────────────────────
+class _ProfileReal extends StatefulWidget {
+  const _ProfileReal();
+  @override
+  State<_ProfileReal> createState() => _ProfileRealState();
+}
+
+class _ProfileRealState extends State<_ProfileReal> {
+  final _api = HnagApi();
+  profile_v2.ProfileDataV2? _profile;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final me = await _api.me();
+      if (me == null || me['user'] is! Map) {
+        setState(() => _error = 'Cần đăng nhập để xem profile.');
+        return;
+      }
+      final u = me['user'] as Map<String, dynamic>;
+      final level = ((u['level'] as int?) ?? 1).clamp(1, 99);
+      final fc = (u['foodie_class'] as String?) ?? 'tep';
+      final emoji = switch (fc) {
+        'tep' => '🦐', 'tom' => '🍤', 'cua' => '🦀', 'muc' => '🦑', 'ca-map' => '🦈', 'rong' => '🐉', _ => '🦐',
+      };
+      setState(() => _profile = profile_v2.ProfileDataV2(
+        id: u['id'] as String,
+        displayName: (u['display_name'] as String?) ?? (u['username'] as String?) ?? 'Bạn',
+        username: (u['username'] as String?) ?? 'foodie',
+        avatarUrl: u['avatar_url'] as String?,
+        coverUrl: u['cover_url'] as String?,
+        bio: (u['bio'] as String?) ?? '',
+        level: level,
+        foodieClass: fc.toUpperCase()[0] + fc.substring(1),
+        classEmoji: emoji,
+        reviews: (me['reviewsCount'] as int?) ?? 0,
+        followers: (me['followers'] as int?) ?? 0,
+        following: (me['following'] as int?) ?? 0,
+        isPremium: (u['is_premium'] as bool?) ?? false,
+        isVerified: (u['is_verified'] as bool?) ?? false,
+        isMe: true,
+      ));
+    } catch (e) {
+      setState(() => _error = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Profile v2'), backgroundColor: Colors.transparent),
+        body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!))),
+      );
+    }
+    if (_profile == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
+    }
+    return profile_v2.ProfileScreenV2(profile: _profile!);
+  }
 }

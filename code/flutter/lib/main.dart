@@ -622,18 +622,28 @@ class _ToolsTab extends StatelessWidget {
         })))),
     ];
     final hiFi = [
-      ('🏠', 'Home v2', 'Hi-Fi feed: greeting + AI hero + trending + friends + TikTok', () =>
+      ('🏠', 'Home v2', 'Real /v1/foods/trending + /v1/ai/suggest + /v1/me', () =>
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.homeDemo(context)))),
-      ('🎯', 'AI Decide v2', '6-mode picker + hunger/time/budget questions', () =>
+      ('🎯', 'AI Decide v2', '6-mode picker → real /v1/ai/suggest', () =>
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.aiDecideDemo(context)))),
-      ('🃏', 'Card Stack v2', 'Tinder-style swipe — vuốt L/R/U/D', () =>
+      ('🃏', 'Card Stack v2', 'Swipe 8 món thật từ /v1/ai/suggest', () =>
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.cardStackDemo(context)))),
-      ('🍜', 'Food Detail v2', 'SliverAppBar + ingredients + recipe + sticky CTA', () =>
+      ('🍜', 'Food Detail v2', 'Fetch /v1/foods/:id thật', () =>
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.foodDetailDemo(context)))),
-      ('🛒', 'Cart v2', 'Qty stepper + voucher + total + checkout', () =>
+      ('🏪', 'Restaurant Detail v2', 'Fetch /v1/restaurants/nearby thật', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.restaurantDetailDemo(context)))),
+      ('🛒', 'Cart v2', 'Items từ /v1/foods/trending → checkout', () =>
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.cartDemo(context)))),
-      ('📦', 'Order Tracking v2', 'Timeline status + driver card + ETA hero', () =>
+      ('📦', 'Order Tracking v2', 'Timeline + driver (WS subscribe TODO)', () =>
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.orderTrackingDemo(context)))),
+      ('💖', 'Mood Wheel v2', '8 mood radial → /v1/ai/mood-suggest thật', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.moodWheelDemo(context)))),
+      ('🎤', 'Voice Hà v2', 'Intent classify → /v1/ai/mood-suggest', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.voiceHaDemo(context)))),
+      ('💎', 'Premium v2', 'Dark pricing → /v1/billing/checkout', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.premiumDemo(context)))),
+      ('👤', 'Profile v2', 'Fetch /v1/me + /v1/streaks thật', () =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _Hifi.profileDemo(context)))),
     ];
     return SafeArea(
       child: ListView(
