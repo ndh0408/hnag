@@ -1062,14 +1062,162 @@ class _ProfileRealState extends State<_ProfileReal> {
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Profile v2'), backgroundColor: Colors.transparent),
-        body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!))),
-      );
+      // Fallback: still let user reach Settings + Dev menu even if /v1/me fails
+      return _ProfileFallback(error: _error!, onRetry: () { setState(() => _error = null); _load(); });
     }
     if (_profile == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
     }
-    return profile_v2.ProfileScreenV2(profile: _profile!);
+    return profile_v2.ProfileScreenV2(
+      profile: _profile!,
+      onSettings: () => _openSettingsAndTools(context),
+    );
+  }
+}
+
+void _openSettingsAndTools(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFFBFAF7),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(color: const Color(0xFFC9C3B6), borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          Text('Cài đặt & Công cụ',
+            style: HnagType.h2.copyWith(color: HnagColors.neutral900, fontFamily: HnagFonts.display),
+          ),
+          const SizedBox(height: 16),
+          _ToolMenuItem(emoji: '⚙️', title: 'Cài đặt', subtitle: 'Tài khoản · thông báo · giao diện',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.settingsDemo(context))); }),
+          _ToolMenuItem(emoji: '💎', title: 'HNAG+ Premium', subtitle: 'Unlock unlimited AI + ẩn QC',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.premiumDemo(context))); }),
+          _ToolMenuItem(emoji: '💖', title: 'Mood Wheel', subtitle: 'Chọn món theo cảm xúc',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.moodWheelDemo(context))); }),
+          _ToolMenuItem(emoji: '🎤', title: 'Trợ lý Hà (voice)', subtitle: 'Hỏi bằng giọng tự nhiên',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.voiceHaDemo(context))); }),
+          _ToolMenuItem(emoji: '📅', title: 'Lịch ăn tuần', subtitle: 'AI plan 7 ngày + grocery list',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.mealPlannerDemo(context))); }),
+          _ToolMenuItem(emoji: '🗳️', title: 'Vote nhóm', subtitle: 'Realtime vote với bạn bè',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.groupVotingDemo(context))); }),
+          _ToolMenuItem(emoji: '🌙', title: 'Late Night Mode', subtitle: 'Quán còn mở 24h',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.lateNightDemo(context))); }),
+          _ToolMenuItem(emoji: '🔔', title: 'Thông báo', subtitle: 'AI gợi ý · trending · streak',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.notificationsDemo(context))); }),
+          _ToolMenuItem(emoji: '🏪', title: 'Quán gần đây', subtitle: 'Restaurant chi tiết',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.restaurantDetailDemo(context))); }),
+          _ToolMenuItem(emoji: '🛒', title: 'Giỏ hàng', subtitle: 'Cart + checkout flow',
+            onTap: () { Navigator.pop(context); Navigator.of(context).push(MaterialPageRoute(builder: (_) => Hifi.cartDemo(context))); }),
+        ],
+      ),
+    ),
+  );
+}
+
+class _ToolMenuItem extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  const _ToolMenuItem({required this.emoji, required this.title, required this.subtitle, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(color: const Color(0xFFEFECE5), borderRadius: BorderRadius.circular(10)),
+                alignment: Alignment.center,
+                child: Text(emoji, style: const TextStyle(fontSize: 20)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: HnagType.label.copyWith(color: HnagColors.neutral900, fontWeight: FontWeight.w600, fontFamily: HnagFonts.body)),
+                    Text(subtitle, style: HnagType.bodySm.copyWith(color: HnagColors.neutral600, fontFamily: HnagFonts.body)),
+                  ],
+                ),
+              ),
+              const HnagIcon('chevR', size: 18, color: HnagColors.neutral400),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileFallback extends StatelessWidget {
+  final String error;
+  final VoidCallback onRetry;
+  const _ProfileFallback({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFFBFAF7),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 40),
+              const Text('🍜', style: TextStyle(fontSize: 64), textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              Text('Cần đăng nhập',
+                textAlign: TextAlign.center,
+                style: HnagType.h2.copyWith(color: HnagColors.neutral900, fontFamily: HnagFonts.display),
+              ),
+              const SizedBox(height: 8),
+              Text(error,
+                textAlign: TextAlign.center,
+                style: HnagType.bodySm.copyWith(color: HnagColors.neutral600, fontFamily: HnagFonts.body),
+              ),
+              const SizedBox(height: 28),
+              HnagButton(
+                label: 'Thử lại',
+                variant: BtnVariant.primary,
+                size: BtnSize.lg,
+                iconLeading: 'refresh',
+                fullWidth: true,
+                onPressed: onRetry,
+              ),
+              const SizedBox(height: 12),
+              HnagButton(
+                label: 'Cài đặt & Công cụ',
+                variant: BtnVariant.outline,
+                size: BtnSize.lg,
+                iconLeading: 'settings',
+                fullWidth: true,
+                onPressed: () => _openSettingsAndTools(context),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

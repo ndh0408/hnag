@@ -189,31 +189,42 @@ class RootScreen extends StatefulWidget {
 class _RootScreenState extends State<RootScreen> {
   // 5-tab layout matching design/m-home.jsx <MobileNav>:
   //   Trang chủ · Khám phá · [center FAB AI Decide] · Feed · Tôi
-  String _active = 'home';
+  static const _tabKeys = ['home', 'explore', 'feed', 'me'];
+  int _index = 0;
+
+  // Build each tab ONCE so state (scroll, fetched data, controllers) is
+  // preserved when the user switches tabs. IndexedStack keeps them all
+  // mounted but only shows the active one.
+  late final List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+    _pages = [
+      Hifi.homeDemo(context),
+      Hifi.searchDemo(context),
+      Hifi.tiktokFeedDemo(context),
+      Hifi.profileDemo(context),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Pages are recreated lazily so each tab refresh fetches latest API data.
-    final body = switch (_active) {
-      'home'    => Hifi.homeDemo(context),
-      'explore' => Hifi.searchDemo(context),
-      'feed'    => Hifi.tiktokFeedDemo(context),
-      'me'      => Hifi.profileDemo(context),
-      _         => Hifi.homeDemo(context),
-    };
-
     return Scaffold(
       backgroundColor: const Color(0xFFFBFAF7),  // tokens neutral.25
       body: HnagDesign(
         tokens: SemanticTokens.light,
-        child: body,
+        child: IndexedStack(index: _index, children: _pages),
       ),
       bottomNavigationBar: HnagDesign(
         tokens: SemanticTokens.light,
         child: HnagMobileNav(
-          active: _active,
+          active: _tabKeys[_index],
           glass: true,
-          onTap: (k) => setState(() => _active = k),
+          onTap: (k) {
+            final i = _tabKeys.indexOf(k);
+            if (i >= 0 && i != _index) setState(() => _index = i);
+          },
           onCenterTap: () => Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => Hifi.aiDecideDemo(context),
           )),
