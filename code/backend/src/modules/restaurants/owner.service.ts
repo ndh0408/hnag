@@ -117,7 +117,7 @@ export class OwnerService {
       },
     });
     // Push to anyone subscribed to this restaurant's room
-    this.realtime.broadcastRestaurant(restaurantId, 'restaurant:live', {
+    await this.realtime.broadcastRestaurant(restaurantId, 'restaurant:live', {
       crowdedness: updated.crowdedness,
       waitMinutes: updated.wait_minutes,
       isOpen: updated.is_open,

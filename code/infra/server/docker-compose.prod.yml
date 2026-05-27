@@ -132,6 +132,14 @@ services:
       timeout: 3s
       retries: 5
       start_period: 40s
+    # Audit realtime-scale Tier-1: raise fd ceiling so the WS gateway can
+    # hold 30-50k concurrent sockets per pod without "too many open files".
+    # Linux default 1024 is way under what socket.io needs at any real
+    # scale.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     networks: [hnag-internal]
     # NOTE: Watchtower auto-update is intentionally disabled for this service.
     # Auto-pulling :latest into prod is a supply-chain + availability risk

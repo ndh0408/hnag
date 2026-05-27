@@ -123,7 +123,7 @@ export class OrdersService {
     const updated = await this.prisma.orders.update({ where: { id: orderId }, data });
 
     if (updated.user_id) {
-      this.realtime.broadcastUser(updated.user_id, 'order:update', {
+      await this.realtime.broadcastUser(updated.user_id, 'order:update', {
         orderId: updated.id,
         status: updated.status,
         eta: opts?.eta,

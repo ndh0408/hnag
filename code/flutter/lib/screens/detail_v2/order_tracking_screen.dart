@@ -52,6 +52,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   late OrderStage _stage;
   late String _eta;
   io.Socket? _socket;
+  Timer? _heartbeat;
+  int _lastSeq = 0;
+  DateTime? _retryAfter;
 
   @override
   void initState() {
@@ -64,32 +67,58 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   void _connectSocket() {
     final token = AuthService.instance.accessToken;
     if (token == null) return;
+    if (_retryAfter != null && DateTime.now().isBefore(_retryAfter!)) return;
+    _socket?.dispose();
     _socket = io.io(
       'wss://api.tothanhthuy.cloud',
       io.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
+          .setReconnectionDelay(1000)
+          .setReconnectionDelayMax(15000)
+          .setReconnectionAttempts(20)
           .setAuth({'token': token})
           .build(),
     );
     _socket!.onConnect((_) {
-      // user:{userId} room is auto-joined by RealtimeGateway on JWT decode.
-      // No explicit subscribe needed; just listen for events.
+      // user:{userId} room auto-joined by RealtimeGateway on JWT decode.
+      // Start app-layer heartbeat (audit realtime-trace §10) so a half-
+      // open NAT state surfaces in ≤30s instead of waiting for
+      // socket.io's pingTimeout.
+      _heartbeat?.cancel();
+      _heartbeat = Timer.periodic(const Duration(seconds: 30), (_) {
+        try {
+          _socket?.emit('ping', {'ts': DateTime.now().millisecondsSinceEpoch});
+        } catch (_) {/* swallow */}
+      });
     });
     _socket!.on('order:update', (data) {
       if (!mounted || data is! Map) return;
-      // Only react to events for THIS order id.
+      // Filter: only this order.
       if (data['orderId'] != widget.orderId) return;
+      // Dedup + ordering via server-stamped _seq (audit realtime-trace §3, §4).
+      final seq = (data['_seq'] as num?)?.toInt() ?? 0;
+      if (seq > 0 && seq <= _lastSeq) return;
+      if (seq > 0) _lastSeq = seq;
       setState(() {
         _stage = _stageFromString(data['status'] as String?);
         if (data['eta'] is String) _eta = data['eta'] as String;
       });
+    });
+    _socket!.on('force_disconnect', (data) {
+      if (data is! Map) return;
+      final retryAfterSec = (data['retryAfterSec'] as num?)?.toInt() ?? 60;
+      _retryAfter = DateTime.now().add(Duration(seconds: retryAfterSec));
+      _socket?.dispose();
+      _socket = null;
+      _heartbeat?.cancel();
     });
     _socket!.connect();
   }
 
   @override
   void dispose() {
+    _heartbeat?.cancel();
     _socket?.dispose();
     super.dispose();
   }
