@@ -44,14 +44,23 @@ import { MealModule } from './modules/meal/meal.module';
     // Rate limiting — 100 req/min per IP global; per-route overrides via @Throttle
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
 
-    // Background queues
+    // Background queues. Single source of truth = REDIS_URL so we don't drift
+    // from RedisModule + RedisIoAdapter (both use REDIS_URL). The previous
+    // hardcoded REDIS_HOST/PORT defaulted to localhost when only REDIS_URL
+    // was set in the deploy env, crashing BullMQ at boot.
     BullModule.forRootAsync({
-      useFactory: () => ({
-        connection: {
-          host: process.env.REDIS_HOST ?? 'localhost',
-          port: Number(process.env.REDIS_PORT ?? 6379),
-        },
-      }),
+      useFactory: () => {
+        const url = new URL(process.env.REDIS_URL ?? 'redis://localhost:6379');
+        return {
+          connection: {
+            host: url.hostname,
+            port: Number(url.port || 6379),
+            password: url.password || undefined,
+            username: url.username || undefined,
+            db: url.pathname && url.pathname.length > 1 ? Number(url.pathname.slice(1)) : undefined,
+          },
+        };
+      },
     }),
 
     // GraphQL (admin dashboard endpoint). Protected by GqlAdminGuard on every
