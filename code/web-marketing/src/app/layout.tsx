@@ -60,9 +60,71 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Audit web-marketing-SEO: schema.org JSON-LD for Organization +
+ * WebSite + MobileApplication. Lets Google show rich results (sitelink
+ * searchbox, app card with download CTA). Embedded server-side once at
+ * root layout. Update `sameAs` when social handles land.
+ */
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': 'https://tothanhthuy.cloud/#organization',
+      name: 'HNAG',
+      alternateName: 'Hôm Nay Ăn Gì?',
+      url: 'https://tothanhthuy.cloud',
+      logo: 'https://tothanhthuy.cloud/og-default.png',
+      sameAs: [],
+    },
+    {
+      '@type': 'WebSite',
+      '@id': 'https://tothanhthuy.cloud/#website',
+      url: 'https://tothanhthuy.cloud',
+      name: 'HNAG — Hôm Nay Ăn Gì?',
+      description: 'AI khám phá & quyết định bữa ăn cho người Việt.',
+      publisher: { '@id': 'https://tothanhthuy.cloud/#organization' },
+      inLanguage: 'vi-VN',
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: 'https://tothanhthuy.cloud/?q={search_term_string}',
+        'query-input': 'required name=search_term_string',
+      },
+    },
+    {
+      '@type': 'MobileApplication',
+      name: 'HNAG — Hôm Nay Ăn Gì?',
+      operatingSystem: 'iOS, Android',
+      applicationCategory: 'FoodAndDrinkApplication',
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'VND' },
+      downloadUrl: 'https://app.tothanhthuy.cloud/',
+      url: 'https://tothanhthuy.cloud',
+      author: { '@id': 'https://tothanhthuy.cloud/#organization' },
+    },
+  ],
+};
+
+/**
+ * Audit web-marketing-SEO: explicit `viewport` so Lighthouse mobile-
+ * friendly check is satisfied + sets the iOS Safari address-bar theme.
+ */
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: '#FF6B2B',
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi" className={`${inter.variable} ${urbanist.variable} ${mono.variable}`} suppressHydrationWarning>
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );

@@ -455,10 +455,32 @@ def row_to_values(rec: dict[str, Any]) -> str:
     )
 
 
-def write_sql(records: list[dict[str, Any]], path: str, source: str) -> None:
+def fetch_existing_slugs(db_url: str) -> set[str]:
+    """Pre-fetch all `restaurants.slug` for the incremental filter.
+
+    With ~14k rows today, this is a sub-second single SELECT and saves us
+    from issuing 14k no-op UPDATEs per daily refresh.
+    """
+    try:
+        import psycopg2
+    except ImportError:
+        sys.exit("ERROR: --incremental needs psycopg2. Run: pip install psycopg2-binary")
+    conn = psycopg2.connect(db_url)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT slug FROM restaurants")
+            return {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def write_sql(records: list[dict[str, Any]], path: str, source: str, incremental: bool = False) -> None:
     cols = ("name, slug, address, city, district, ward, location, phone, website, "
             "cuisine_tags, open_hours, is_verified, status, created_at, updated_at")
-    conflict = (
+    # Incremental mode: never touch existing rows. DO NOTHING preserves
+    # any curated data already in DB (verified_at, manually-edited
+    # cuisine_tags, etc.) while still letting NEW slugs flow in.
+    conflict = "ON CONFLICT (slug) DO NOTHING;" if incremental else (
         "ON CONFLICT (slug) DO UPDATE SET\n"
         "  phone        = COALESCE(EXCLUDED.phone, restaurants.phone),\n"
         "  website      = COALESCE(EXCLUDED.website, restaurants.website),\n"
@@ -537,6 +559,16 @@ def main() -> None:
     ap.add_argument("--direct", action="store_true", help="insert into DB instead of writing SQL")
     ap.add_argument("--db-url", default=None, help="DATABASE_URL for --direct")
     ap.add_argument("--fsq-key", default=None, help="Foursquare API key (or env FSQ_API_KEY)")
+    ap.add_argument(
+        "--incremental",
+        action="store_true",
+        help=(
+            "Skip slugs that already exist. With --direct: pre-fetches existing "
+            "slugs from DB and filters records BEFORE upsert. With SQL output: "
+            "switches ON CONFLICT clause from DO UPDATE → DO NOTHING. Use this "
+            "for daily refreshes so existing curated rows aren't churned."
+        ),
+    )
     args = ap.parse_args()
 
     cities: list[str] = []
@@ -595,11 +627,23 @@ def main() -> None:
             db_url = os.environ.get("DATABASE_URL")
         if not db_url:
             sys.exit("--direct needs --db-url or env DATABASE_URL")
+        if args.incremental:
+            existing = fetch_existing_slugs(db_url)
+            before = len(records)
+            records = [r for r in records if r["slug"] not in existing]
+            print(
+                f"Incremental: kept {len(records)}/{before} records ({len(existing)} already in DB)",
+                file=sys.stderr,
+            )
+            if not records:
+                print("Nothing new to upsert.", file=sys.stderr)
+                return
         n = insert_direct(records, db_url)
         print(f"Upserted {n} restaurants into DB.", file=sys.stderr)
     else:
-        write_sql(records, args.out, args.source)
-        print(f"Wrote {len(records)} rows -> {args.out}", file=sys.stderr)
+        write_sql(records, args.out, args.source, incremental=args.incremental)
+        suffix = " (incremental — ON CONFLICT DO NOTHING)" if args.incremental else ""
+        print(f"Wrote {len(records)} rows -> {args.out}{suffix}", file=sys.stderr)
 
 
 if __name__ == "__main__":
