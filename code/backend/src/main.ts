@@ -20,6 +20,12 @@ import { isProd } from './common/config/secrets';
 import { httpLogger } from './common/config/logger';
 import { initSentry } from './common/config/sentry';
 
+// Audit #31: BigInt comes back from `food_interactions.id` etc. but
+// JSON.stringify(bigint) throws by default. Patch the prototype so any
+// downstream serializer (HTTP responses, log lines) coerces to string.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+(BigInt.prototype as any).toJSON = function () { return this.toString(); };
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
@@ -31,9 +37,14 @@ async function bootstrap() {
   });
   const logger = new Logger('Bootstrap');
 
-  // Behind Cloudflare Tunnel / proxy — trust the first proxy hop so req.ip and
-  // the rate-limiter see the real client IP (cf-connecting-ip / x-forwarded-for).
-  app.set('trust proxy', 1);
+  // Audit #10: we sit behind Cloudflare Tunnel → nginx → backend, so there
+  // are TWO proxy hops in front of Express. `trust proxy 1` makes req.ip
+  // return the FIRST upstream (nginx) instead of the real client. Set to 2
+  // so the rate-limiter / req.ip sees the real client IP from
+  // cf-connecting-ip / x-forwarded-for. The nginx config in
+  // code/infra/server/nginx.conf is updated in lock-step to forward
+  // X-Forwarded-For correctly.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_DEPTH ?? 2));
 
   // Observability: Sentry FIRST (must wrap subsequent middleware to attach
   // request scope), then structured logs (audit hnag-audit-2026-05 §23 —

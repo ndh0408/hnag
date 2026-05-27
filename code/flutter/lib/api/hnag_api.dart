@@ -1,21 +1,30 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 import '../models/food_card.dart';
 import 'auth_service.dart';
 import 'api_exception.dart';
 import 'resilient_client.dart';
 
 /// HNAG API client — talks to api.tothanhthuy.cloud.
+///
+/// Audit #16/#33: this used to be `final ResilientClient _client = ResilientClient()`
+/// constructed per-`HnagApi()` instance, meaning each `new HnagApi()` got its
+/// own circuit-breaker state. With 30+ call sites doing `HnagApi()` inline
+/// (see main.dart), the breaker was effectively per-call. Now a process-wide
+/// singleton — `HnagApi()` returns the same instance, so the breaker is
+/// global.
 class HnagApi {
   static const String baseUrl = 'https://api.tothanhthuy.cloud';
 
+  static final HnagApi _instance = HnagApi._internal();
+  factory HnagApi() => _instance;
+  HnagApi._internal();
+
   /// Resilient client used by `_fetchList` and any new method that opts in.
-  /// Audit hnag-audit-2026-05 §5-Flutter: bare `http.get` had no retry, no
-  /// circuit breaker, single timeout. Existing methods are migrated one at
-  /// a time — they keep working until they're converted because the
-  /// fallback path through raw http still exists.
   final ResilientClient _client = ResilientClient();
+  final Uuid _uuid = const Uuid();
 
   Future<List<Map<String, dynamic>>> trendingFoods({String period = 'week', String? city}) async {
     final uri = Uri.parse('$baseUrl/v1/foods/trending').replace(queryParameters: {
@@ -272,14 +281,25 @@ class HnagApi {
   // ─── Orders ──────────────────────────────────────────────────────────
   /// Create an order intent — backend returns a partner deep-link
   /// (Grab/Shopee/BeFood) that the app should `launchUrlString` to.
+  ///
+  /// Audit #48: every call MUST carry a stable Idempotency-Key so a flaky
+  /// network retry does not create duplicate orders. The caller can pass
+  /// one in (e.g. derived from a single "Đặt giao" tap) or we generate a
+  /// fresh UUID per call. The backend dedupes within 24h.
   Future<Map<String, dynamic>?> createOrderIntent({
     required String foodId,
     String? restaurantId,
     String? preferredPartner,
+    String? idempotencyKey,
   }) async {
+    final idem = idempotencyKey ?? _uuid.v4();
     final r = await AuthService.instance.authedRequest((h) => http.post(
           Uri.parse('$baseUrl/v1/orders/intent'),
-          headers: {...h, 'Content-Type': 'application/json'},
+          headers: {
+            ...h,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idem,
+          },
           body: jsonEncode({
             'foodId': foodId,
             if (restaurantId != null) 'restaurantId': restaurantId,

@@ -9,6 +9,7 @@ import { FridgeService } from './services/fridge.service';
 import { VoiceService, audioExtFromMime } from './services/voice.service';
 import { ModerationService } from './services/moderation.service';
 import { AiCooldown, AiCooldownGuard } from '../../common/guards/ai-cooldown.guard';
+import { Premium } from '../../common/guards/premium.guard';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -49,13 +50,18 @@ const MatchLinkDto = z.object({
   location: z.object({ lat: z.number(), lng: z.number() }).optional(),
 });
 
+// Audit #19, #20: tightened upload caps. The previous 14MB audio / 8MB image
+// let a logged-in user run up O($100/hour) of OpenAI vendor cost.
+//
+//   audioBase64 max 2.7MB ≈ 2MB binary ≈ 60s @ 256kbps — enough for a
+//   single voice query; longer audio is artisanal cost amplification.
+//   imageBase64 max 2.7MB ≈ 2MB binary — well above a downsized 1280px JPEG.
 const FridgeScanDto = z.object({
-  // data URL or https URL; ~8MB base64 ≈ 6MB image
-  imageBase64: z.string().min(16).max(8_000_000),
+  imageBase64: z.string().min(16).max(2_700_000),
 });
 
 const VoiceDto = z.object({
-  audioBase64: z.string().min(16).max(14_000_000),
+  audioBase64: z.string().min(16).max(2_700_000),
   mime: z.string().max(64).optional(),
 });
 
@@ -71,21 +77,34 @@ export class AiController {
     private readonly moderation: ModerationService,
   ) {}
 
-  /** Fridge Scan — detect ingredients from a photo (GPT-4o vision) → recipes. */
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  /**
+   * Fridge Scan — detect ingredients from a photo (GPT-4o vision) → recipes.
+   *
+   * Audit #20: Premium-gated to bound vendor cost amplification (a 6MB
+   * vision call costs ~$0.05 each; an abuser could run hundreds for free).
+   * Free users get the text-based `/ai/fridge-recipes` instead.
+   */
+  @Premium()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('fridge-scan')
   @HttpCode(200)
   async fridgeScan(
-    @CurrentUser() _u: JwtPayload,
+    @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(FridgeScanDto)) body: z.infer<typeof FridgeScanDto>,
   ) {
-    const detected = await this.fridge.detectIngredients(body.imageBase64);
+    const detected = await this.fridge.detectIngredients(body.imageBase64, { userId: user.sub });
     const result = await this.fridge.matchRecipes(detected);
     return { detected, ...result };
   }
 
-  /** Voice "Hỏi Hà" — Whisper transcribe → intent → suggestions. */
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  /**
+   * Voice "Hỏi Hà" — Whisper transcribe → intent → suggestions.
+   *
+   * Audit #19: Premium-gated. Audio is also capped at 2.7MB in DTO so a
+   * single call cannot transcribe > ~60s.
+   */
+  @Premium()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('voice')
   @HttpCode(200)
   async voiceAsk(

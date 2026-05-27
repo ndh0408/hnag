@@ -134,9 +134,14 @@ export class ClaimService {
     if (c.geo_verified) score += 0.3;
     if (c.email_domain_match) score += 0.2;
 
+    // Audit #47: auto-approval REQUIRES geo_verified. Without an on-site GPS
+    // ping, even a verified email + scribbled "license" image can pass the
+    // 0.7 score threshold and grab the restaurant. With geo_verified as a
+    // HARD GATE, auto-approval is impossible from a remote impersonator.
     let status: 'approved' | 'manual_review' | 'pending' = 'pending';
-    if (score >= 0.7) status = 'approved';
+    if (score >= 0.7 && c.geo_verified) status = 'approved';
     else if (score >= 0.4) status = 'manual_review';
+    else if (score >= 0.7 /* high score without geo → still manual */) status = 'manual_review';
 
     const updated = await this.prisma.restaurant_claims.update({
       where: { id: claimId },

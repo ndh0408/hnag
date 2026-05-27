@@ -91,22 +91,28 @@ export class OrdersService {
 
   /**
    * Transition an order to a new status and broadcast `order:update` to the
-   * owner's user room over WebSocket. Used by:
-   *   - partner webhooks (Shopee/Grab/Baemin via partners.webhook controller)
-   *   - dev/QA manual triggers via POST /v1/orders/:id/status
+   * owner's user room over WebSocket.
+   *
+   * Audit #4: the previous version let a JWT-authed user mark THEIR OWN
+   * order `done`, defeating fulfilment reconciliation. Now only:
+   *   - actorRole === 'admin' (gated by @Roles('admin','support','super_admin'))
+   *   - actorRole === 'partner' (HMAC-verified webhook in PartnersModule)
+   * can mutate status. Anything else throws.
+   *
    * Side-effects: sets {confirmed,delivered,cancelled}_at timestamp when the
    * status crosses that boundary.
    */
-  async updateStatus(orderId: string, next: OrderStatus, opts?: { eta?: string; actorUserId?: string }) {
+  async updateStatus(
+    orderId: string,
+    next: OrderStatus,
+    opts?: { eta?: string; actorUserId?: string; actorRole?: 'admin' | 'partner' },
+  ) {
     if (!ALLOWED_STATUSES.includes(next)) throw new BadRequestException('Invalid status');
+    if (opts?.actorRole !== 'admin' && opts?.actorRole !== 'partner') {
+      throw new ForbiddenException('Order status mutation requires admin or partner role');
+    }
     const order = await this.prisma.orders.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
-
-    // Owner-only guard when an actor user id is provided (dev/QA path). Partner
-    // webhook path passes no actor and is authenticated by HMAC instead.
-    if (opts?.actorUserId && order.user_id !== opts.actorUserId) {
-      throw new ForbiddenException();
-    }
 
     const data: Record<string, unknown> = { status: next };
     const now = new Date();

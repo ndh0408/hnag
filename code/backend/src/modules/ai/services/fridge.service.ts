@@ -1,29 +1,53 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import OpenAI from 'openai';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { ModerationService } from './moderation.service';
 
 /**
  * Real Fridge Scan: GPT-4o-mini vision detects ingredients from a photo, then we
  * match cookable dishes. The matching logic is shared with the public text-only
  * endpoint.
+ *
+ * Audit #34: any user-supplied image MUST pass an image moderation gate
+ * before being forwarded to the vision model. Otherwise an attacker can
+ * upload CSAM / violence and get our OpenAI org banned. We use OpenAI's
+ * `omni-moderation-latest` which supports image inputs as data URLs.
  */
 @Injectable()
 export class FridgeService {
   private readonly logger = new Logger(FridgeService.name);
   private readonly client: OpenAI | null;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly moderation: ModerationService,
+  ) {
     this.client = process.env.OPENAI_API_KEY
       ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30_000, maxRetries: 1 })
       : null;
   }
 
   /** Detect ingredients from a fridge/pantry image (data URL or https URL). */
-  async detectIngredients(image: string): Promise<string[]> {
+  async detectIngredients(image: string, opts: { userId?: string } = {}): Promise<string[]> {
     const client = this.client;
     if (!client) throw new BadRequestException('Tính năng nhận diện ảnh chưa được bật');
-    if (!/^data:image\/[a-z]+;base64,/i.test(image) && !/^https?:\/\//.test(image)) {
-      throw new BadRequestException('Ảnh không hợp lệ (cần data URL base64 hoặc https URL)');
+    // Only allow data URLs for our own JPEG/PNG/WEBP, or https URLs hosted on
+    // our CDN. Reject arbitrary https to prevent SSRF / abuse via 3rd-party
+    // image hosts (audit #34 + defence in depth).
+    const isDataUrl = /^data:image\/(jpeg|jpg|png|webp);base64,/i.test(image);
+    const isOurCdn = /^https:\/\/(app|cdn|media)\.tothanhthuy\.cloud\//i.test(image);
+    if (!isDataUrl && !isOurCdn) {
+      throw new BadRequestException('Ảnh không hợp lệ');
+    }
+    // Image moderation gate (audit #34). Vision moderation API call adds
+    // ~200ms; we accept that since the route is Premium-gated + rate-limited.
+    const verdict = await this.moderation.checkImage(image, { userId: opts.userId });
+    if (!verdict.allowed) {
+      this.logger.warn(`Fridge-scan image rejected by moderation: reason=${verdict.reason}`);
+      throw new HttpException(
+        { code: 'MODERATION_BLOCKED', message: 'Ảnh không phù hợp', reason: verdict.reason },
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
     }
     const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',

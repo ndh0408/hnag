@@ -61,7 +61,7 @@ export class OwnerService {
         id: true,
         name: true,
         address: true,
-        cover_url: true,
+        cover_image: true,
         city: true,
         district: true,
         is_claimed: true,
@@ -93,7 +93,7 @@ export class OwnerService {
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.phone !== undefined) data.phone = dto.phone;
-    if (dto.cover_url !== undefined) data.cover_url = dto.cover_url;
+    if (dto.cover_image !== undefined) data.cover_image = dto.cover_image;
     if (dto.opening_hours !== undefined) data.opening_hours = dto.opening_hours as any;
     return this.prisma.restaurants.update({ where: { id: restaurantId }, data });
   }
@@ -104,21 +104,21 @@ export class OwnerService {
     const updated = await this.prisma.restaurant_live.upsert({
       where: { restaurant_id: restaurantId },
       update: {
-        crowding: dto.crowding,
+        crowdedness: dto.crowdedness,
         wait_minutes: dto.wait_minutes ?? null,
         is_open: dto.is_open ?? undefined,
         updated_at: new Date(),
       },
       create: {
         restaurant_id: restaurantId,
-        crowding: dto.crowding,
+        crowdedness: dto.crowdedness,
         wait_minutes: dto.wait_minutes ?? null,
         is_open: dto.is_open ?? true,
       },
     });
     // Push to anyone subscribed to this restaurant's room
     this.realtime.broadcastRestaurant(restaurantId, 'restaurant:live', {
-      crowding: updated.crowding,
+      crowdedness: updated.crowdedness,
       waitMinutes: updated.wait_minutes,
       isOpen: updated.is_open,
       at: new Date().toISOString(),
@@ -186,7 +186,7 @@ export class OwnerService {
           name: dto.name,
           description: dto.description ?? null,
           price_vnd: dto.price_vnd,
-          photo_url: dto.photo_url ?? null,
+          image_url: dto.image_url ?? null,
           available: dto.available ?? true,
           position: dto.position ?? 0,
           food_id: dto.food_id ?? null,
@@ -199,7 +199,7 @@ export class OwnerService {
         name: dto.name,
         description: dto.description ?? null,
         price_vnd: dto.price_vnd,
-        photo_url: dto.photo_url ?? null,
+        image_url: dto.image_url ?? null,
         available: dto.available ?? true,
         position: dto.position ?? 0,
         food_id: dto.food_id ?? null,

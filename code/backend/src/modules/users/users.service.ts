@@ -112,47 +112,37 @@ export class UsersService {
   }
 
   async bumpDecideStreak(userId: string) {
-    // Audit hnag-audit-2026-05 §13: the read-then-write streak update used
-    // to corrupt counts under concurrent "decide" calls (two parallel
-    // requests both read N, both wrote N+1). Fix: do the whole transition
-    // inside an INSERT ... ON CONFLICT statement so PostgreSQL serializes
-    // the row update for us.
+    // Audit #46: streak day boundaries are computed in Asia/Ho_Chi_Minh,
+    // not in the server's local TZ (which is UTC on the deploy VM). Without
+    // this, a user who decides at 22:00 VN time on Monday and 09:00 VN time
+    // on Tuesday counted as "same day" because UTC midnight is 07:00 VN.
     //
-    // Semantics preserved from the previous implementation:
-    //   - first decide of the day  → bump count
-    //   - same day re-decide       → no-op
-    //   - yesterday's last decide  → streak continues (N + 1)
-    //   - older                    → streak resets to 1
-    //   - best_decide tracks max streak ever
+    // Strategy: compute "today VN" as a YYYY-MM-DD string in Asia/Ho_Chi_Minh,
+    // then store as a UTC midnight Date that round-trips faithfully via the
+    // PostgreSQL `date` type (last_decide is @db.Date). All comparisons stay
+    // in the date-string space.
     return this.prisma.$transaction(async (tx) => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const todayStr = vnDateString(new Date());
+      const today = vnDateStringToUtcMidnight(todayStr);
+      const yesterdayStr = vnDateString(new Date(Date.now() - 24 * 3600 * 1000));
+
       const existing = await tx.streaks.findUnique({
         where: { user_id: userId },
         select: { daily_decide: true, last_decide: true, best_decide: true },
       });
-
       if (!existing) {
         return tx.streaks.create({
           data: { user_id: userId, daily_decide: 1, best_decide: 1, last_decide: today },
         });
       }
 
-      const last = existing.last_decide ? new Date(existing.last_decide) : null;
-      if (last) last.setHours(0, 0, 0, 0);
-      if (last && last.getTime() === today.getTime()) {
+      const lastStr = existing.last_decide ? vnDateString(new Date(existing.last_decide)) : null;
+      if (lastStr === todayStr) {
         return tx.streaks.findUnique({ where: { user_id: userId } });
       }
-
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      const continued = !!(last && last.getTime() === yesterday.getTime());
+      const continued = lastStr === yesterdayStr;
       const newCount = continued ? (existing.daily_decide ?? 0) + 1 : 1;
       const newBest = Math.max(existing.best_decide ?? 0, newCount);
-
-      // Conditional WHERE — only succeeds if no concurrent writer has already
-      // advanced past `today`. If the conditional update touches 0 rows we
-      // re-read and accept the winner's row.
       const result = await tx.streaks.updateMany({
         where: {
           user_id: userId,
@@ -166,7 +156,6 @@ export class UsersService {
         },
       });
       if (result.count === 0) {
-        // Race lost — another concurrent decide already advanced the streak.
         return tx.streaks.findUnique({ where: { user_id: userId } });
       }
       return tx.streaks.findUnique({ where: { user_id: userId } });
@@ -264,6 +253,29 @@ export class UsersService {
       where: { OR: [{ follower_id: userId }, { followee_id: userId }] },
     });
 
+    // Audit #21: posts / reviews / comments retain user_id but the user row
+    // is soft-deleted (status='deleted') with PII anonymised; cascading
+    // hard-delete is deferred 30d so accidental deletions can be undone.
+    // Until the purge cron runs, scrub the FREE-TEXT fields so an active
+    // viewer doesn't see the user's words attributed to "Tài khoản đã xoá".
+    await this.prisma.posts.updateMany({
+      where: { user_id: userId },
+      data: { caption: null, is_archived: true },
+    });
+    await this.prisma.reviews.updateMany({
+      where: { user_id: userId },
+      data: { title: null, content: null, images: [] },
+    });
+    // post_comments has no Prisma relation back to users; scrub text directly.
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE post_comments SET content = '[đã xoá]' WHERE user_id = $1::uuid`,
+        userId,
+      );
+    } catch (err) {
+      this.logger.warn(`post_comments anonymise failed: ${(err as Error).message}`);
+    }
+
     // Forensic trail (App Store 5.1.1(v) + Decree 13/2023). Email + IP are
     // stored ONLY as SHA-256 fingerprints so the log is itself
     // privacy-respecting while remaining matchable for a "this was my
@@ -297,4 +309,28 @@ export class UsersService {
 const { createHash } = require('crypto') as typeof import('crypto');
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
+}
+
+/**
+ * Audit #46: "Today" for streak purposes must be Asia/Ho_Chi_Minh (UTC+7),
+ * not the deploy VM's UTC. A user deciding at 22:00 VN (15:00 UTC) on Monday
+ * and 09:00 VN (02:00 UTC) on Tuesday must count as TWO different days; the
+ * old code computed in UTC and treated them as same-day.
+ *
+ * `Intl.DateTimeFormat` is the only stdlib-correct way to get a YYYY-MM-DD
+ * string in a specific named TZ without pulling a dependency. It's slower
+ * than direct math but called once per streak bump, so cheap enough.
+ */
+function vnDateString(d: Date): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  return fmt.format(d); // en-CA gives "YYYY-MM-DD" already
+}
+
+function vnDateStringToUtcMidnight(s: string): Date {
+  // Date "YYYY-MM-DD" parsed as UTC midnight — round-trips cleanly with the
+  // PostgreSQL `date` type which is TZ-less.
+  return new Date(`${s}T00:00:00Z`);
 }

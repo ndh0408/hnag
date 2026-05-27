@@ -41,6 +41,13 @@ services:
     # AOF + RDB combined — closes audit hnag-audit-2026-05 §5 ("Redis not persistent").
     # appendfsync=everysec is the sane default: ≤1s data loss on crash, ~5%
     # throughput overhead; RDB is the compact offline snapshot.
+    #
+    # Audit #39: `allkeys-lru` evicts ANY key under memory pressure, including
+    # OTPs, refresh-token chains, idempotency locks — i.e. things whose
+    # eviction is a correctness bug, not a performance issue. Switch to
+    # `volatile-lru`: only keys with an explicit TTL are evictable. All
+    # session/OTP/idempotency keys in the codebase already set EXPIRE, so
+    # they remain evictable; everything without TTL stays.
     command:
       - "redis-server"
       - "--appendonly"
@@ -53,7 +60,7 @@ services:
       - "--maxmemory"
       - "768mb"
       - "--maxmemory-policy"
-      - "allkeys-lru"
+      - "volatile-lru"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -162,18 +169,48 @@ services:
       timeout: 3s
       retries: 5
       start_period: 40s
-    networks:
-      hnag-internal:
-        # `backend` alias means Docker DNS resolves `backend` to BOTH
-        # containers' IPs (round-robin). The Cloudflare tunnel config
-        # uses `http://backend:4000` as its ingress target, so adding
-        # this alias is the zero-CF-dashboard-change path to get traffic
-        # to both replicas. For finer-grained LB (least_conn,
-        # max_fails), wire an explicit nginx service in front.
-        aliases: [backend]
+    # Audit #38: keeping the `backend` DNS alias on the second replica means
+    # Docker DNS round-robins traffic to BOTH replicas while nginx ALSO does
+    # least_conn over them — resulting in `backend-2` getting ~75% of load.
+    # Drop the alias; the nginx upstream below references each replica
+    # explicitly so the LB is balanced.
+    networks: [hnag-internal]
     deploy:
       resources:
         limits: { cpus: '2', memory: 1.5G }
+
+  # Audit #40: closes the most expensive missing piece — automated Postgres
+  # backups. Without this, any disk corruption / accidental drop / volume
+  # loss = total data loss. Runs `pg_dump` daily inside the container, keeps
+  # 7 daily / 4 weekly / 6 monthly snapshots locally. Restore via
+  # `docker run … pg_restore` against the dated file.
+  #
+  # OPS REMINDER: schedule an offsite copy (Backblaze B2 / S3) of the
+  # `pg_backups` volume — local backups don't survive disk failure.
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: hnag-postgres-backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: hnag-postgres
+      POSTGRES_DB: hnag
+      POSTGRES_USER: hnag
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      SCHEDULE: "0 3 * * *"           # 03:00 UTC daily
+      BACKUP_KEEP_DAYS: "7"
+      BACKUP_KEEP_WEEKS: "4"
+      BACKUP_KEEP_MONTHS: "6"
+      HEALTHCHECK_PORT: "8080"
+      POSTGRES_EXTRA_OPTS: "-Z6 --schema=public --blobs"
+    volumes:
+      - pg_backups:/backups
+    depends_on:
+      postgres: { condition: service_healthy }
+    secrets: [postgres_password]
+    networks: [hnag-internal]
+    deploy:
+      resources:
+        limits: { memory: 256M }
 
   owner-dashboard:
     image: ${HNAG_DASHBOARD_IMAGE:-ghcr.io/${GHCR_OWNER:-yourname}/hnag-owner-dashboard:latest}
@@ -196,6 +233,7 @@ services:
 
 volumes:
   pg_data:
+  pg_backups:
   redis_data:
 
 secrets:

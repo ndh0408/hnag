@@ -32,7 +32,19 @@ class AuthService {
   static final AuthService instance = AuthService._();
   AuthService._();
 
-  final _storage = const FlutterSecureStorage();
+  /// Audit #7: lock iOS Keychain storage to `first_unlock_this_device` +
+  /// no iCloud sync. The defaults (`whenUnlocked` + sync) include refresh
+  /// tokens in iCloud Keychain backup, so an attacker restoring a stolen
+  /// iPhone backup onto a new device inherits the user's logged-in session.
+  /// Android uses EncryptedSharedPreferences (Keystore-backed), which is
+  /// already device-bound by default.
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+      synchronizable: false,
+    ),
+  );
   final _userController = StreamController<AuthUser?>.broadcast();
   AuthUser? _user;
   String? _accessToken;

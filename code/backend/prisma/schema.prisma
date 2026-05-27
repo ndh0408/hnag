@@ -31,6 +31,9 @@ model users {
   phone           String?  @unique
   phone_hash      String?  @unique
   email           String?  @unique
+  /// Apple Sign-In stable subject. Auth path keys SSO upserts on this column,
+  /// NEVER on a synthetic `apple+sub@hnag.internal` email (audit #12, sql/17).
+  apple_sub       String?  @unique
   username        String?  @unique
   display_name    String?
   avatar_url      String?
@@ -108,11 +111,21 @@ model auth_sessions {
   device_id           String?  @db.Uuid
   refresh_token_hash  String?  @unique
   expires_at          DateTime?
+  /// Absolute hard cap on the refresh chain (sql/18). Never extends past this
+  /// date — user must re-authenticate even if rolling 30d window is still
+  /// fresh. Audit #5 (stolen-token rolling-forever attack).
+  absolute_expires_at DateTime
+  /// Every rotated descendant of an initial login carries the same family_id.
+  /// Reuse detection revokes the entire family in one shot.
+  family_id           String   @db.Uuid
+  rotation_count      Int      @default(0)
   ip_inet             String?
   user_agent          String?
   revoked_at          DateTime?
   created_at          DateTime @default(now())
   users               users?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([family_id])
 }
 
 model foods {

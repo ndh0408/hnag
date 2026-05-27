@@ -58,7 +58,11 @@ export class AppleTokenVerifier {
   private readonly JWKS_URL = 'https://appleid.apple.com/auth/keys';
   private readonly EXPECTED_ISS = 'https://appleid.apple.com';
   private readonly CACHE_KEY = 'apple:jwks:v1';
+  /** SETNX lock to prevent thundering-herd refetch on key rotation (audit #43). */
+  private readonly REFRESH_LOCK_KEY = 'apple:jwks:v1:refresh-lock';
   private readonly CACHE_TTL_SEC = 60 * 60; // 1 hour
+  /** Soft-grace TTL — return stale JWKS for this long if Apple is unreachable. */
+  private readonly STALE_GRACE_SEC = 24 * 3600;
 
   constructor(
     private readonly http: HttpService,
@@ -126,9 +130,9 @@ export class AppleTokenVerifier {
     if (cached) {
       const hit = cached.keys.find((k) => k.kid === kid);
       if (hit) return hit;
-      // kid not in cache — Apple may have rotated; force refresh once.
+      // kid not in cache — Apple may have rotated; refresh under single-flight.
     }
-    const fresh = await this.fetchAndCache();
+    const fresh = await this.refreshSingleFlight(cached);
     return fresh.keys.find((k) => k.kid === kid) ?? null;
   }
 
@@ -142,6 +146,41 @@ export class AppleTokenVerifier {
     }
   }
 
+  /**
+   * Refresh the JWKS under a Redis SETNX lock so 1000 simultaneous Apple
+   * sign-ins after a key rotation result in ONE outbound fetch instead of
+   * 1000 (audit #43 — Apple rate-limits and would 429 the spike).
+   *
+   * The losers poll the cache for up to 3s with 200ms cadence; when the
+   * winner publishes, they observe the new key. On Apple-unreachable, the
+   * winner returns the stale cache if available rather than throwing —
+   * better an expired-by-rotation signature failure on a single key than
+   * a full Apple-sign-in outage.
+   */
+  private async refreshSingleFlight(stale: AppleJwks | null): Promise<AppleJwks> {
+    const acquired = await this.redis.set(this.REFRESH_LOCK_KEY, '1', 'EX', 10, 'NX');
+    if (acquired === 'OK') {
+      try {
+        return await this.fetchAndCache();
+      } catch (err) {
+        this.logger.warn(`Apple JWKS refresh failed: ${(err as Error).message}`);
+        if (stale) return stale;
+        throw err;
+      } finally {
+        this.redis.del(this.REFRESH_LOCK_KEY).catch(() => null);
+      }
+    }
+    // Loser path: poll the cache for the winner's publish, up to 3s @ 200ms.
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await new Promise((r) => setTimeout(r, 200));
+      const fresh = await this.loadCached();
+      if (fresh) return fresh;
+    }
+    // Winner never published within window — fall back to the stale copy.
+    if (stale) return stale;
+    throw new UnauthorizedException('Apple JWKS unavailable');
+  }
+
   private async fetchAndCache(): Promise<AppleJwks> {
     const resp = await firstValueFrom(
       this.http.get<AppleJwks>(this.JWKS_URL, { timeout: 5000 }),
@@ -151,9 +190,14 @@ export class AppleTokenVerifier {
       throw new UnauthorizedException('Apple JWKS empty');
     }
     try {
-      await this.redis.setex(this.CACHE_KEY, this.CACHE_TTL_SEC, JSON.stringify(jwks));
+      // Standard TTL on the live cache; a parallel longer-TTL stale-grace
+      // key lets verify() limp on if Apple is fully unreachable.
+      const payload = JSON.stringify(jwks);
+      const pipe = this.redis.pipeline();
+      pipe.setex(this.CACHE_KEY, this.CACHE_TTL_SEC, payload);
+      pipe.setex(this.CACHE_KEY + ':stale', this.STALE_GRACE_SEC, payload);
+      await pipe.exec();
     } catch (err) {
-      // Cache best-effort — verification still works on the freshly fetched value.
       this.logger.warn(`Apple JWKS cache set failed: ${(err as Error).message}`);
     }
     return jwks;

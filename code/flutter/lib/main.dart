@@ -34,13 +34,14 @@ import 'screens/meal_planner_screen.dart';
 import 'screens/nearby_restaurants_screen.dart';
 import 'observability/crash_reporter.dart';
 
-/// Mapbox PUBLIC token (pk.*) — safe to embed in the app binary (Mapbox public
-/// tokens are designed for client-side use). Override at build time with
-/// --dart-define=MAPBOX_TOKEN=pk.xxxx. Rotate in the Mapbox dashboard if abused.
-const _mapboxToken = String.fromEnvironment(
-  'MAPBOX_TOKEN',
-  defaultValue: 'pk.eyJ1IjoibmRoMDQwOCIsImEiOiJjbW93ZGR1NDUwZ3h1MnRwdXc5Y2pzMTZ3In0.d2_0AkgEVIApE5XG0EQdAg',
-);
+/// Mapbox PUBLIC token (pk.*). Audit #29: the previous hardcoded fallback
+/// shipped a known token in every APK, letting any extracted-token user
+/// drive cost against our Mapbox account with no rate-limit story. Now
+/// the token is build-time-only via `--dart-define=MAPBOX_TOKEN=pk.xxxx`;
+/// builds without one ship without maps (the `setAccessToken` call is
+/// skipped). Set the token via Mapbox dashboard URL allowlist
+/// (https://tothanhthuy.cloud/* + bundle id allowlist) before release.
+const _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN', defaultValue: '');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

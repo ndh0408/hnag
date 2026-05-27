@@ -63,20 +63,27 @@ export class AiOrchestratorService {
     const cached = await this.redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
+    // Org-wide LLM cost kill switch (audit #8): refuse to call OpenAI at all
+    // when the global daily spend has crossed OPENAI_DAILY_HARD_CAP_USD. The
+    // pipeline still serves results from the heuristic ranker + static
+    // fallback captions, with `degraded: true` so the UI can say "Hà nghỉ
+    // trưa". Cap defaults to $50/day if unset — adjust per growth stage.
+    const orgBudgetOk = await this.checkOrgLlmBudget();
+
     // Single-flight dedup — concurrent identical requests should NOT all
-    // hit the LLM. The first claim wins (`SET NX EX 10s`); the rest poll
-    // the cache key for up to 5s and return the winner's result. Bounds
-    // the worst-case wait so a stuck LLM call doesn't pile up.
+    // hit the LLM. The first claim wins (`SET NX EX 8s`); the rest poll the
+    // cache key for up to 3s with a tighter cadence so the Node event loop
+    // doesn't sit busy under reconnect storms (audit #18).
     const inflightKey = `ai:inflight:${req.userId}:${contextHash}`;
-    const acquired = await this.redis.set(inflightKey, '1', 'EX', 10, 'NX');
+    const acquired = await this.redis.set(inflightKey, '1', 'EX', 8, 'NX');
     if (acquired !== 'OK') {
-      for (let attempt = 0; attempt < 10; attempt++) {
-        await new Promise((r) => setTimeout(r, 500));
+      // Poll: 6 × 250ms ≈ 1.5s. Worst-case waiter unblocks in 1.5s or falls
+      // through to compute. Was 10 × 500ms = 5s of busy-waiting per request.
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await new Promise((r) => setTimeout(r, 250));
         const winner = await this.redis.get(cacheKey);
         if (winner) return JSON.parse(winner);
       }
-      // Winner still hasn't published after 5s — fall through and compute
-      // ourselves rather than block the user any longer.
       this.logger.warn(`/ai/suggest single-flight timeout user=${req.userId} hash=${contextHash}`);
     }
 
@@ -106,9 +113,12 @@ export class AiOrchestratorService {
       enriched,
     });
 
-    // 5. Selection. Bounded by a per-user daily LLM budget so a scripted account
-    // (even premium) can't run up unbounded OpenAI spend.
-    const allowLlm = await this.consumeLlmBudget(req.userId, req.isPremium);
+    // 5. Selection. Bounded by:
+    //  - per-user daily LLM budget (scripted-account abuse)
+    //  - org-wide kill switch (#8 OPENAI_DAILY_HARD_CAP_USD) — refuses LLM
+    //    when the day's total spend has crossed the configured cap
+    const perUserBudgetOk = await this.consumeLlmBudget(req.userId, req.isPremium);
+    const allowLlm = perUserBudgetOk && orgBudgetOk;
     const wantLlmSelect = allowLlm && (req.mode === 'mood' || req.mode === 'detail' || !!enriched.mood || !!enriched.inferredMood);
 
     let finalTop: typeof ranked = [];
@@ -181,7 +191,8 @@ export class AiOrchestratorService {
     const degraded = wantLlmSelect && !usedLlmForSelect;
     const degradedReasons: string[] = [];
     if (degraded) degradedReasons.push('llm_unavailable');
-    if (!allowLlm) degradedReasons.push('budget_exhausted');
+    if (!perUserBudgetOk) degradedReasons.push('user_budget_exhausted');
+    if (!orgBudgetOk) degradedReasons.push('org_budget_exhausted');
 
     const response: Record<string, unknown> = {
       sessionId,
@@ -193,63 +204,34 @@ export class AiOrchestratorService {
       response.degradedReasons = degradedReasons;
     }
 
-    // Cache
+    // Cache + release single-flight lock (await this so concurrent waiters
+    // can read the cache key before this request returns).
     await this.redis.setex(cacheKey, this.cacheTtlSec, JSON.stringify(response));
-    // Release the single-flight lock so concurrent waiters can read the
-    // cache key. Done in parallel — even if it fails the lock has a
-    // 10s TTL that auto-expires.
-    await this.redis.del(inflightKey).catch(() => null);
+    this.redis.del(inflightKey).catch(() => null);
 
-    // Log + per-session cost
     const latencyMs = Date.now() - t0;
     this.logger.log(
       `/ai/suggest user=${req.userId} mode=${req.mode} latency=${latencyMs}ms cards=${cards.length} ` +
         `llm_calls=${costTracker.calls} llm_cost_usd=${costTracker.costUsd.toFixed(6)}`,
     );
-    await this.prisma.ai_sessions.create({
-      data: {
-        id: sessionId,
-        user_id: req.userId,
-        mode: req.mode,
-        input: req.context as any,
-        output_cards: cards as any,
-        ranker_scores: finalTop.map((c) => c.scores) as any,
-        reason_codes: finalTop.flatMap((c) => c.reasonCodes),
-        latency_ms: latencyMs,
-        // Audit hnag-audit-2026-05 §15: column was always null. Now carries
-        // the real spend for this single suggest() invocation. Sum() this
-        // column by user/day for spend dashboards + cost-anomaly alerts.
-        // Decimal(8,5) caps at 999.99999 USD per session → far above any
-        // single legitimate call.
-        llm_cost_usd: costTracker.costUsd.toFixed(5),
-      },
-    });
 
-    // Maintain a per-user daily running total in Redis so we can flag
-    // spend anomalies in real time without a per-request DB aggregate.
-    if (costTracker.costUsd > 0) {
-      const dayKey = `ai:spend:${req.userId}:${new Date().toISOString().slice(0, 10)}`;
-      const cents = Math.round(costTracker.costUsd * 100_000); // 1e-5 USD precision
-      await this.redis.incrby(dayKey, cents);
-      await this.redis.expire(dayKey, 7 * 24 * 3600);
-    }
-
-    // Product analytics — fire-and-forget so the suggest call doesn't block
-    // on the analytics_events insert. Used downstream for retention dashboards,
-    // recommendation CTR, AI acceptance rate (prompt-pack §11 / audit §4).
-    this.analytics.track({
-      event: 'ai:suggest',
-      userId: req.userId,
+    // Audit #17: ai_sessions write + spend bookkeeping + analytics used to
+    // happen synchronously, blowing the p95 budget. Now fire-and-forget —
+    // failures are logged at debug level. Reads of `ai_sessions` are
+    // read-after-write only via /ai/refresh, which already polls.
+    this.persistSessionAsync({
       sessionId,
-      properties: {
-        mode: req.mode,
-        cardCount: cards.length,
-        latencyMs,
-        llmUsed: usedLlmForSelect,
-        llmCalls: costTracker.calls,
-        llmCostUsd: Number(costTracker.costUsd.toFixed(6)),
-        isPremium: req.isPremium,
-      },
+      userId: req.userId,
+      mode: req.mode,
+      input: req.context,
+      cards,
+      rankerScores: finalTop.map((c) => c.scores),
+      reasonCodes: finalTop.flatMap((c) => c.reasonCodes),
+      latencyMs,
+      llmCostUsd: costTracker.costUsd,
+      llmCalls: costTracker.calls,
+      llmUsed: usedLlmForSelect,
+      isPremium: req.isPremium,
     });
 
     return response;
@@ -341,6 +323,97 @@ export class AiOrchestratorService {
   }
 
   // ---- internals ----
+
+  /**
+   * Persist `ai_sessions` + spend bookkeeping + analytics without blocking
+   * the request thread (audit #17). Errors are logged at debug — a missing
+   * row is acceptable; the cards already shipped to the user.
+   */
+  private persistSessionAsync(args: {
+    sessionId: string;
+    userId: string;
+    mode: string;
+    input: Record<string, unknown>;
+    cards: unknown[];
+    rankerScores: unknown[];
+    reasonCodes: string[];
+    latencyMs: number;
+    llmCostUsd: number;
+    llmCalls: number;
+    llmUsed: boolean;
+    isPremium: boolean;
+  }): void {
+    void (async () => {
+      try {
+        await this.prisma.ai_sessions.create({
+          data: {
+            id: args.sessionId,
+            user_id: args.userId,
+            mode: args.mode,
+            input: args.input as any,
+            output_cards: args.cards as any,
+            ranker_scores: args.rankerScores as any,
+            reason_codes: args.reasonCodes,
+            latency_ms: args.latencyMs,
+            llm_cost_usd: args.llmCostUsd.toFixed(5),
+          },
+        });
+        if (args.llmCostUsd > 0) {
+          const day = new Date().toISOString().slice(0, 10);
+          const userDayKey = `ai:spend:${args.userId}:${day}`;
+          const orgDayKey = `ai:spend:org:${day}`;
+          const cents = Math.round(args.llmCostUsd * 100_000); // 1e-5 USD precision
+          const pipe = this.redis.pipeline();
+          pipe.incrby(userDayKey, cents);
+          pipe.expire(userDayKey, 7 * 24 * 3600);
+          pipe.incrby(orgDayKey, cents);
+          pipe.expire(orgDayKey, 7 * 24 * 3600);
+          await pipe.exec();
+        }
+        this.analytics.track({
+          event: 'ai:suggest',
+          userId: args.userId,
+          sessionId: args.sessionId,
+          properties: {
+            mode: args.mode,
+            cardCount: args.cards.length,
+            latencyMs: args.latencyMs,
+            llmUsed: args.llmUsed,
+            llmCalls: args.llmCalls,
+            llmCostUsd: Number(args.llmCostUsd.toFixed(6)),
+            isPremium: args.isPremium,
+          },
+        });
+      } catch (err) {
+        this.logger.debug(`persistSessionAsync failed (${args.sessionId}): ${(err as Error).message}`);
+      }
+    })();
+  }
+
+  /**
+   * Org-wide LLM cost kill switch (audit #8). Returns false once today's
+   * total spend in `ai:spend:org:YYYY-MM-DD` exceeds OPENAI_DAILY_HARD_CAP_USD.
+   * Defaults to $50/day if unset — set this explicitly per growth stage.
+   * Returns true on Redis errors (fail-open to avoid breaking the whole
+   * surface from a Redis blip; the per-user budget still applies).
+   */
+  private async checkOrgLlmBudget(): Promise<boolean> {
+    const capUsd = Number(process.env.OPENAI_DAILY_HARD_CAP_USD ?? '50');
+    if (!Number.isFinite(capUsd) || capUsd <= 0) return true;
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const raw = await this.redis.get(`ai:spend:org:${day}`);
+      const cents = Number(raw ?? '0');
+      const usdToday = cents / 100_000;
+      if (usdToday >= capUsd) {
+        this.logger.warn(`ORG LLM kill-switch: today $${usdToday.toFixed(2)} >= cap $${capUsd}`);
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }
 
   private async consumeDailyQuota(userId: string): Promise<{ ok: boolean; remaining?: number }> {
     const key = `ai:quota:${userId}:${today()}`;

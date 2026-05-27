@@ -20,6 +20,7 @@ import { CreateOrderIntentDto, UpdateOrderStatusDto } from './dto/order.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { REDIS } from '../../common/redis/redis.module';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('Orders')
 @ApiBearerAuth()
@@ -39,9 +40,6 @@ export class OrdersController {
    * "Đặt giao"). On retry within 24h with the same key the original
    * response is replayed verbatim, so a flaky mobile network can't
    * accidentally create duplicate orders.
-   *
-   * Audit hnag-audit-2026-05 §B-19 (HIGH): order creation had no idempotency
-   * guard; double-tap or network retry → two orders.
    */
   @ApiHeader({
     name: 'Idempotency-Key',
@@ -57,20 +55,14 @@ export class OrdersController {
   ) {
     const key = this.normalizeIdempotencyKey(idemKey);
     if (!key) {
-      // No idempotency key provided — still create, but log so we can spot
-      // mobile clients that haven't migrated yet.
       this.logger.debug(`POST /orders/intent without Idempotency-Key user=${u.sub}`);
       return this.orders.createIntent(u.sub, dto);
     }
 
     const redisKey = `idem:order:${u.sub}:${key}`;
-    // SET NX: only succeeds if no prior request claimed this key.
     const claimed = await this.redis.set(redisKey + ':lock', '1', 'EX', 86400, 'NX');
 
     if (!claimed) {
-      // Either a prior request is still in flight OR it already finished.
-      // Try to serve the cached result; if it's not there yet, the original
-      // is still running — tell the client to retry shortly.
       const cached = await this.redis.get(redisKey + ':result');
       if (cached) {
         this.logger.debug(`Idempotency replay for key=${key} user=${u.sub}`);
@@ -81,12 +73,15 @@ export class OrdersController {
 
     try {
       const result = await this.orders.createIntent(u.sub, dto);
-      // Cache the response for 24h so any subsequent retry replays it.
-      await this.redis.setex(redisKey + ':result', 86400, JSON.stringify(result));
+      // Pipeline so result-cache and lock-extend land atomically; if Redis
+      // network blips after the order is created, both fail together and the
+      // 24h lock auto-expires without the client being stuck forever (audit #36).
+      const pipe = this.redis.pipeline();
+      pipe.setex(redisKey + ':result', 86400, JSON.stringify(result));
+      pipe.expire(redisKey + ':lock', 86400);
+      await pipe.exec();
       return result;
     } catch (err) {
-      // On failure release the lock so the client can retry with the same
-      // key without being stuck behind the failed attempt.
       await this.redis.del(redisKey + ':lock');
       throw err;
     }
@@ -102,26 +97,27 @@ export class OrdersController {
     return this.orders.getOrder(u.sub, id);
   }
 
-  // Owner-only dev/QA endpoint to advance an order's status — emits
-  // `order:update` over WebSocket to the user room so the tracking screen
-  // reacts live. Real production updates come from partner webhook handlers
-  // (see PartnersModule) that bypass this guard via HMAC.
+  /**
+   * ADMIN-ONLY order status transition. Audit #4: the previous endpoint
+   * allowed a JWT-authed USER to mark their own order `done`, defeating any
+   * fulfilment reconciliation. The only legitimate sources of status updates
+   * are:
+   *   - Partner aggregator webhooks (Grab/Shopee/Baemin) — implemented under
+   *     /v1/partners/webhook with HMAC auth (out of scope for this guard).
+   *   - Admin/support intervention (refunds, edge cases).
+   *
+   * Users can NEVER mutate their own order status via this route.
+   */
+  @Roles('admin', 'support', 'super_admin')
   @Post(':id/status')
   updateStatus(
     @CurrentUser() u: JwtPayload,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateOrderStatusDto,
   ) {
-    return this.orders.updateStatus(id, body.status, { eta: body.eta, actorUserId: u.sub });
+    return this.orders.updateStatus(id, body.status, { eta: body.eta, actorUserId: u.sub, actorRole: 'admin' });
   }
 
-  /**
-   * Idempotency keys are client-generated; we reject anything that isn't a
-   * plausibly-unique opaque string. Defence against an attacker spraying
-   * `Idempotency-Key: a` to read another user's prior order response (the
-   * Redis key is namespaced by user.sub so cross-user replay is already
-   * impossible — this is the second layer).
-   */
   private normalizeIdempotencyKey(raw: string | undefined): string | null {
     if (!raw) return null;
     const k = raw.trim();

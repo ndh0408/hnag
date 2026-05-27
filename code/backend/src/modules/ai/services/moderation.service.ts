@@ -52,11 +52,20 @@ export class ModerationService {
   private readonly abuseThreshold = Number(process.env.MODERATION_ABUSE_THRESHOLD ?? '5');
 
   // Quick-deny patterns that we should refuse without burning an API call.
-  // Conservative — only obvious prompt-injection markers.
+  // English + Vietnamese (audit: prior list was English-only and a VN-language
+  // injection bypassed it trivially).
   private readonly hardDeny: RegExp[] = [
     /ignore\s+(?:all\s+)?previous\s+instructions/i,
     /you\s+are\s+now\s+(?:a\s+)?(?:dan|developer\s+mode|jailbroken)/i,
     /\bsystem\s*prompt\b.*\b(?:reveal|leak|print)/i,
+    // VN — common injection openers in the wild
+    /b[oỏỏ]\s*qua\s+(?:t[aấ]t\s*c[ảảa]\s+)?ch[ỉỉi]\s*d[ẫẫâ]n\s+tr[uưừướ][ớơô]c\s*đ[oỏó]/i,
+    /quên\s+(?:hết\s+)?ch[ỉiỉí]\s*d[ẫâẫ]n/i,
+    /b[ạâạ]n\s+là\s+(?:một\s+)?(?:hacker|kẻ\s+phá|jailbreak)/i,
+    /lộ\s+(?:ra\s+)?prompt|in\s+ra\s+prompt|tiết\s+lộ\s+prompt/i,
+    // Pretending to be system / role-confusion
+    /\[\s*(?:system|admin|root)\s*\]\s*:/i,
+    /<\s*\/?\s*(?:system|admin)\s*>/i,
   ];
 
   constructor(@Inject(REDIS) private readonly redis: IORedis) {
@@ -123,6 +132,61 @@ export class ModerationService {
       this.logger.warn(`moderation API call failed: ${(e as Error).message}`);
       // Soft-fail open — the core suggest flow shouldn't break because
       // OpenAI moderation is hiccuping.
+      return { allowed: true, reason: 'unavailable', fromCache: false };
+    }
+  }
+
+  /**
+   * Image moderation gate (audit #34). Forwards a data URL or https URL to
+   * OpenAI's omni-moderation-latest endpoint, which supports image inputs.
+   *
+   * Soft-fail OPEN on infra unavailability so the core /ai/fridge-scan path
+   * isn't completely broken by a moderation API blip. Per-user abuse counter
+   * still bumps on hard rejections.
+   *
+   * Cache by SHA-256 of the image bytes (data URL or URL string). Two scans
+   * of the same image don't re-pay the moderation cost.
+   */
+  async checkImage(
+    image: string,
+    opts: { userId?: string | null } = {},
+  ): Promise<ModerationVerdict> {
+    if (!image) return { allowed: true, reason: 'empty', fromCache: false };
+
+    const key = `mod:img:v1:${sha256(image)}`;
+    try {
+      const cached = await this.redis.get(key);
+      if (cached) {
+        const allowed = cached.startsWith('ok:');
+        if (!allowed) await this.bumpAbuse(opts.userId, cached.slice(3));
+        return { allowed, reason: cached.startsWith('ok:') ? 'cached' : cached.slice(3), fromCache: true };
+      }
+    } catch (e) {
+      this.logger.warn(`moderation image cache lookup failed: ${(e as Error).message}`);
+    }
+
+    if (!this.client) return { allowed: true, reason: 'unavailable', fromCache: false };
+
+    try {
+      const res: any = await this.client.moderations.create({
+        model: process.env.MODERATION_IMAGE_MODEL ?? 'omni-moderation-latest',
+        input: [{ type: 'image_url', image_url: { url: image } } as any],
+      });
+      const r = res.results?.[0];
+      if (!r) return { allowed: true, reason: 'unknown', fromCache: false };
+      if (r.flagged) {
+        const cats = Object.entries(r.categories ?? {})
+          .filter(([, v]) => v === true)
+          .map(([k]) => k);
+        const reason = cats[0] ?? 'flagged';
+        await this.redis.setex(key, this.cacheTtlSec, `no:${reason}`);
+        await this.bumpAbuse(opts.userId, reason);
+        return { allowed: false, reason, fromCache: false };
+      }
+      await this.redis.setex(key, this.cacheTtlSec, 'ok:clean');
+      return { allowed: true, reason: 'clean', fromCache: false };
+    } catch (e) {
+      this.logger.warn(`moderation image API call failed: ${(e as Error).message}`);
       return { allowed: true, reason: 'unavailable', fromCache: false };
     }
   }

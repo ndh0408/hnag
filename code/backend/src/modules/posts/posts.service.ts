@@ -78,11 +78,10 @@ export class PostsService {
   }
 
   async like(userId: string, postId: string) {
-    // Audit hnag-audit-2026-05 #13 (race): two parallel like requests used to
-    // both succeed-via-catch and BOTH increment like_count even though only
-    // one post_likes row existed, drifting the counter. Fix: createMany with
-    // skipDuplicates returns 0 when the like already exists, so we only
-    // increment on a fresh create.
+    // Audit hnag-audit-2026-05 #13 (race) + #23 (counter drift): createMany
+    // with skipDuplicates returns 0 when the like already exists, so we only
+    // increment on a fresh create. The CHECK constraint in sql/19 blocks any
+    // negative drift if a stray decrement still reaches the DB.
     const created = await this.prisma.post_likes.createMany({
       data: [{ user_id: userId, post_id: postId }],
       skipDuplicates: true,
@@ -99,7 +98,13 @@ export class PostsService {
   async unlike(userId: string, postId: string) {
     const r = await this.prisma.post_likes.deleteMany({ where: { user_id: userId, post_id: postId } });
     if (r.count > 0) {
-      await this.prisma.posts.update({ where: { id: postId }, data: { like_count: { decrement: 1 } } });
+      // Use GREATEST(like_count - 1, 0) so a drifted counter can never go
+      // negative (defence in depth — CHECK constraint in sql/19 enforces it
+      // at the DB level too).
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE posts SET like_count = GREATEST(like_count - 1, 0) WHERE id = $1::uuid`,
+        postId,
+      );
     }
     return { liked: false };
   }

@@ -31,7 +31,7 @@ export class UpdateRestaurantDto {
 
   @ApiPropertyOptional()
   @IsOptional() @IsUrl({ require_protocol: true, protocols: ['http', 'https'] }) @MaxLength(500)
-  cover_url?: string;
+  cover_image?: string;
 
   @ApiPropertyOptional({ description: 'Free-form weekly hours JSON.' })
   @IsOptional()
@@ -40,8 +40,11 @@ export class UpdateRestaurantDto {
 
 /** Live status — what owners flip during service. */
 export class UpdateRestaurantLiveDto {
-  @IsIn(['empty', 'normal', 'busy', 'full'])
-  crowding!: 'empty' | 'normal' | 'busy' | 'full';
+  @ApiPropertyOptional({
+    description: 'Decimal 0..1 crowding density (0 = empty, 1 = full). The legacy enum names map: empty=0, normal=0.4, busy=0.75, full=1.',
+  })
+  @IsOptional()
+  crowdedness?: number;
 
   @ApiPropertyOptional({ minimum: 0, maximum: 240 })
   @IsOptional() @IsInt() @Min(0) @Max(240)
@@ -66,7 +69,7 @@ export class UpsertMenuItemDto {
 
   @ApiPropertyOptional()
   @IsOptional() @IsUrl({ require_protocol: true, protocols: ['http', 'https'] }) @MaxLength(500)
-  photo_url?: string;
+  image_url?: string;
 
   @ApiPropertyOptional()
   @IsOptional() @IsBoolean()
