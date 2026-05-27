@@ -269,6 +269,74 @@ class HnagApi {
     }
   }
 
+  // ─── Notifications ─────────────────────────────────────────────────
+  /// List server-stored notifications. Audit workflow-trace §10: prior
+  /// build synthesised notifications client-side from AI/trending/streak,
+  /// completely ignoring the `notifications` table.
+  Future<List<Map<String, dynamic>>> myNotifications({bool unread = false, int page = 1}) async {
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.get(
+            Uri.parse('$baseUrl/v1/notifications?unread=$unread&page=$page'),
+            headers: h,
+          ).timeout(const Duration(seconds: 10)));
+      if (r.statusCode != 200) return [];
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      return ((body['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('HNAG_API myNotifications error: $e');
+      return [];
+    }
+  }
+
+  Future<bool> markNotificationsRead(List<String> ids) async {
+    if (ids.isEmpty) return true;
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/notifications/read'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode({'ids': ids}),
+          ).timeout(const Duration(seconds: 8)));
+      return r.statusCode == 200;
+    } catch (_) { return false; }
+  }
+
+  // ─── AI feedback ──────────────────────────────────────────────────
+  /// Record a swipe / action on an AI-suggested card. Closes audit
+  /// workflow-trace §6: previously `onSwipe: (c, a) => debugPrint(...)`
+  /// so the ranker's skip-memory penalty was effectively never written.
+  /// Now every left-swipe / right-swipe / detail-open posts to backend.
+  ///
+  /// The session id comes from the `/v1/ai/suggest*` response. For the
+  /// public unauthed endpoint there's no session — those swipes are
+  /// dropped client-side (no-op).
+  Future<bool> aiFeedback({
+    required String? sessionId,
+    required String foodId,
+    required String action, // 'view'|'save'|'skip'|'cook'|'order'|'dine'|'rate'
+    int? rating,
+    String? reason,
+  }) async {
+    if (sessionId == null) return false; // no session → can't attribute
+    if (!AuthService.instance.isAuthed) return false; // endpoint requires JWT
+    try {
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/ai/feedback'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'sessionId': sessionId,
+              'foodId': foodId,
+              'action': action,
+              if (rating != null) 'rating': rating,
+              if (reason != null) 'reason': reason,
+            }),
+          ).timeout(const Duration(seconds: 8)));
+      return r.statusCode == 200;
+    } catch (e) {
+      debugPrint('HNAG_API aiFeedback error: $e');
+      return false;
+    }
+  }
+
   Future<bool> likePost(String postId, {required bool like}) async {
     final r = await AuthService.instance.authedRequest((h) => like
         ? http.post(Uri.parse('$baseUrl/v1/posts/$postId/like'), headers: h)
@@ -332,32 +400,6 @@ class HnagApi {
             headers: {...h, 'Content-Type': 'application/json'},
             body: jsonEncode({'status': 'cancelled'}),
           ).timeout(const Duration(seconds: 10)));
-      return r.statusCode == 200;
-    } catch (_) { return false; }
-  }
-
-  // ─── AI feedback (learn from swipes / orders / cooks) ──────────────────
-  /// Records user behavior on an AI suggestion. action ∈ view/save/skip/cook/
-  /// order/dine/rate. Backend updates personalization weights.
-  Future<bool> aiFeedback({
-    required String sessionId,
-    required String foodId,
-    required String action,
-    int? rating,
-    String? reason,
-  }) async {
-    try {
-      final r = await AuthService.instance.authedRequest((h) => http.post(
-            Uri.parse('$baseUrl/v1/ai/feedback'),
-            headers: {...h, 'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'sessionId': sessionId,
-              'foodId': foodId,
-              'action': action,
-              if (rating != null) 'rating': rating,
-              if (reason != null) 'reason': reason,
-            }),
-          ).timeout(const Duration(seconds: 8)));
       return r.statusCode == 200;
     } catch (_) { return false; }
   }

@@ -47,10 +47,23 @@ class CartStore {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
+  /// Outcome of a load attempt. Lets the UI distinguish "no cart" from
+  /// "cart had to be discarded because it was stale".
+  ///
+  /// Audit workflow-trace §15: previously `load()` returned null both when
+  /// there was no cart and when one was silently expired. UX-hostile.
+  static const int _staleSentinel = -1;
+  static bool _lastLoadWasStale = false;
+  static bool consumeStaleFlag() {
+    final s = _lastLoadWasStale;
+    _lastLoadWasStale = false;
+    return s;
+  }
+
   /// Load the persisted cart. Returns null if there's no saved cart, the
-  /// payload can't be parsed, or the cart is older than 24h (a stale cart
-  /// is more user-hostile than a fresh empty one — the menu / prices may
-  /// have changed, restaurant may have closed). Adjust TTL via maxAge.
+  /// payload can't be parsed, or the cart is older than 24h. Carts older
+  /// than maxAge are cleared AND `consumeStaleFlag()` returns true on the
+  /// next call so the calling screen can show "Giỏ hàng đã hết hạn".
   static Future<CartSnapshot?> load({Duration maxAge = const Duration(hours: 24)}) async {
     final raw = await _storage.read(key: _key);
     if (raw == null || raw.isEmpty) return null;
@@ -58,6 +71,7 @@ class CartStore {
       final json = jsonDecode(raw) as Map<String, dynamic>;
       final savedAt = DateTime.tryParse(json['savedAt'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
       if (DateTime.now().difference(savedAt) > maxAge) {
+        _lastLoadWasStale = true;
         await clear();
         return null;
       }

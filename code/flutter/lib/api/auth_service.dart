@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:synchronized/synchronized.dart';
 import 'package:uuid/uuid.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
+import '../observability/crash_reporter.dart';
 import 'api_exception.dart';
 
 class AuthUser {
@@ -164,25 +166,38 @@ class AuthService {
         'locale': 'vi-VN',
       };
 
+  /// Mutex over `_validateOrRefresh` so two parallel callers on cold start
+  /// (e.g. `init()` + a tab-init API call hitting 401) don't both POST
+  /// `/v1/auth/refresh`. The first one consumes the refresh token, the
+  /// second sees `revoked_at` set → backend revokes the WHOLE family →
+  /// user kicked out. Audit workflow-trace §4.
+  final Lock _refreshLock = Lock();
+
   Future<bool> _validateOrRefresh() async {
     if (_refreshToken == null) return _accessToken != null;
-    try {
-      final r = await _safePost(
-        '/v1/auth/refresh',
-        body: {'refreshToken': _refreshToken},
-        timeout: const Duration(seconds: 8),
-      );
-      if (r.statusCode != 200) return false;
-      return _ingestSession(r);
-    } on ApiException catch (e) {
-      // Hot-start ran with no network → keep the cached session intact so
-      // the user isn't kicked back to login on a momentary signal drop. We
-      // only return `false` (which triggers signOut) when the SERVER said no.
-      if (e.code == 'OFFLINE' || e.code == 'TIMEOUT') return true;
-      return false;
-    } catch (_) {
-      return false;
-    }
+    return _refreshLock.synchronized<bool>(() async {
+      // Re-check inside the critical section: if a peer just finished
+      // refreshing, our cached _accessToken is fresh now → no need to fire
+      // another refresh.
+      final tokenAtStart = _refreshToken;
+      try {
+        final r = await _safePost(
+          '/v1/auth/refresh',
+          body: {'refreshToken': tokenAtStart},
+          timeout: const Duration(seconds: 8),
+        );
+        if (r.statusCode != 200) return false;
+        return _ingestSession(r);
+      } on ApiException catch (e) {
+        // Hot-start ran with no network → keep the cached session intact so
+        // the user isn't kicked back to login on a momentary signal drop.
+        if (e.code == 'OFFLINE' || e.code == 'TIMEOUT') return true;
+        return false;
+      } catch (e, st) {
+        CrashReporter.capture(e, stack: st, tag: 'auth:refresh');
+        return false;
+      }
+    });
   }
 
   Future<void> _persistTokens({required String access, required String refresh, required AuthUser user}) async {
@@ -196,6 +211,8 @@ class AuthService {
       'displayName': user.displayName, 'isPremium': user.isPremium,
     }));
     _userController.add(_user);
+    // Wire Sentry user scope so crashes attach to the signed-in identity.
+    CrashReporter.identify(user.id);
   }
 
   Future<void> signOut() async {
@@ -206,11 +223,26 @@ class AuthService {
     await _storage.delete(key: _kRefresh);
     await _storage.delete(key: _kUser);
     _userController.add(null);
+    CrashReporter.identify(null);
   }
 
   static const _kOnboarded = 'hnag_onboarded';
+  static const _kWelcomeDone = 'hnag_welcome_done';
   Future<bool> isOnboarded() async => (await _storage.read(key: _kOnboarded)) == '1';
   Future<void> setOnboarded() async => _storage.write(key: _kOnboarded, value: '1');
+
+  /// Whether the user has already passed the welcome + permissions
+  /// pre-auth screens. Audit workflow-trace §2: previously local-only,
+  /// every cold boot re-showed the welcome flow.
+  Future<bool> isWelcomeDone() async => (await _storage.read(key: _kWelcomeDone)) == '1';
+  Future<void> setWelcomeDone() async => _storage.write(key: _kWelcomeDone, value: '1');
+
+  /// Fire-and-forget refresh used by `_Boot` on app resume after a long
+  /// background. Audit workflow-trace §15. Goes through the same mutex
+  /// as on-demand refresh so it can't race with an in-flight API retry.
+  Future<void> proactiveRefresh() async {
+    try { await _validateOrRefresh(); } catch (_) {/* best-effort */}
+  }
 
   Map<String, String> authHeaders() {
     if (_accessToken == null) return const {};

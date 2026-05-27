@@ -44,6 +44,14 @@ dependencies:
   socket_io_client: ^2.0.3+1
   sign_in_with_apple: ^6.1.2
 
+  # Crash reporting (audit production-killer §1) — was stubbed; now real.
+  sentry_flutter: ^8.14.2
+
+  # In-process mutex for refresh-token single-flight on app cold start
+  # (avoids two simultaneous /v1/auth/refresh calls revoking each other's
+  # family. Audit: workflow trace §4).
+  synchronized: ^3.3.0+3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

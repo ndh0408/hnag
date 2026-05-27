@@ -33,6 +33,7 @@ import 'screens/food_detail_screen.dart';
 import 'screens/meal_planner_screen.dart';
 import 'screens/nearby_restaurants_screen.dart';
 import 'observability/crash_reporter.dart';
+import 'observability/analytics.dart';
 
 /// Mapbox PUBLIC token (pk.*). Audit #29: the previous hardcoded fallback
 /// shipped a known token in every APK, letting any extracted-token user
@@ -46,9 +47,13 @@ const _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN', defaultValue: '');
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Crash reporting BEFORE any other init so early-boot errors get
-  // captured. No-ops cleanly when sentry_flutter isn't installed yet.
+  // captured. Real sentry_flutter wired since 2026-05-27.
   await CrashReporter.init();
   CrashReporter.install();
+  // Audit workflow-trace §14: Analytics.init() was NEVER called before, so
+  // the flush timer never started and every event sat in the buffer
+  // forever (lost on app close). Wire it now.
+  Analytics.init();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     systemNavigationBarColor: Colors.transparent,
@@ -57,6 +62,15 @@ void main() async {
     MapboxOptions.setAccessToken(_mapboxToken);
   }
   await AuthService.instance.init();
+  if (AuthService.instance.currentUser != null) {
+    Analytics.identify(AuthService.instance.currentUser!.id);
+  }
+  // Re-attach Sentry user scope on every sign-in/out. AuthService already
+  // calls CrashReporter.identify in _persistTokens/signOut; this also
+  // updates Analytics so subsequent events carry the userId join key.
+  AuthService.instance.userChanges.listen((u) {
+    Analytics.identify(u?.id);
+  });
   runApp(const ProviderScope(child: HnagApp()));
 }
 
@@ -81,16 +95,46 @@ class _Boot extends StatefulWidget {
   State<_Boot> createState() => _BootState();
 }
 
-class _BootState extends State<_Boot> {
+class _BootState extends State<_Boot> with WidgetsBindingObserver {
   bool _splashDone = false;
   bool _onboarded = true;
+  DateTime? _backgroundedAt;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AuthService.instance.isOnboarded().then((v) {
       if (mounted) setState(() => _onboarded = v);
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Audit workflow-trace §15: app had no lifecycle handler at all. Resume
+  /// after a long background meant the first API call ate a 401 + refresh
+  /// roundtrip before any user-visible response.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _backgroundedAt = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      final bg = _backgroundedAt;
+      _backgroundedAt = null;
+      if (bg == null) return;
+      final away = DateTime.now().difference(bg);
+      Analytics.track('app:resume', {'background_seconds': away.inSeconds});
+      // Backgrounded > 14 min ≈ access-token will be stale soon (15m JWT).
+      // Fire a proactive refresh so the first user-triggered request
+      // returns in one round-trip instead of two.
+      if (away.inMinutes >= 14 && AuthService.instance.isAuthed) {
+        AuthService.instance.proactiveRefresh();
+      }
+    }
   }
 
   Future<bool> _doLogin(String email) async {
@@ -113,8 +157,22 @@ class _BootState extends State<_Boot> {
         }
         if (!_onboarded) {
           return OnboardingFlow(onComplete: (dna) async {
-            // Persist Food DNA to the backend, then mark done.
-            try { await HnagApi().updatePreferences(dna); } catch (_) {}
+            // Audit workflow-trace §1: previously `catch (_) {}` then
+            // `setOnboarded()` regardless — backend would miss DNA but
+            // user was marked onboarded → potential allergen exposure on
+            // first AI suggest because `candidate-generator` reads
+            // `prefs.allergies ?? []`. Now we only persist `_kOnboarded`
+            // when the backend write succeeded.
+            final ok = await HnagApi().updatePreferences(dna);
+            if (!ok) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Không lưu được hồ sơ. Kiểm tra mạng và thử lại.'),
+                  duration: Duration(seconds: 4),
+                ));
+              }
+              return;
+            }
             await AuthService.instance.setOnboarded();
             if (mounted) setState(() => _onboarded = true);
           });
@@ -136,6 +194,17 @@ class _AuthFlow extends StatefulWidget {
 
 class _AuthFlowState extends State<_AuthFlow> {
   bool _welcomeDone = false;
+  bool _appleBusy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Audit workflow-trace §2: previously local-only, so every cold boot
+    // re-displayed the welcome + permissions flow.
+    AuthService.instance.isWelcomeDone().then((v) {
+      if (mounted) setState(() => _welcomeDone = v);
+    });
+  }
 
   void _goLogin() {
     Navigator.of(context).push(MaterialPageRoute(
@@ -167,8 +236,17 @@ class _AuthFlowState extends State<_AuthFlow> {
           ));
         },
         onApple: () async {
-          final ok = await AuthService.instance.signInWithApple();
-          if (ok && mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+          // Audit workflow-trace §2: Apple/Google buttons had no busy guard
+          // — mashing the button spawned multiple AuthZ sheets. Lock both
+          // SSO paths through a single _appleBusy flag.
+          if (_appleBusy) return;
+          if (mounted) setState(() => _appleBusy = true);
+          try {
+            final ok = await AuthService.instance.signInWithApple();
+            if (ok && mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+          } finally {
+            if (mounted) setState(() => _appleBusy = false);
+          }
         },
         onGoogle: null, // Google SSO requires GCP OAuth setup; deferred
         onGuest: null,
@@ -180,7 +258,10 @@ class _AuthFlowState extends State<_AuthFlow> {
   Widget build(BuildContext context) {
     if (!_welcomeDone) {
       return auth_v2.WelcomeScreen(
-        onStart: () => setState(() => _welcomeDone = true),
+        onStart: () async {
+          await AuthService.instance.setWelcomeDone();
+          if (mounted) setState(() => _welcomeDone = true);
+        },
         onSignIn: _goLogin,
       );
     }
@@ -393,6 +474,7 @@ class _AiDecideTab extends StatefulWidget {
 class _AiDecideTabState extends State<_AiDecideTab> {
   final _api = HnagApi();
   List<FoodCard>? _cards;
+  String? _sessionId; // Audit workflow-trace §6: needed for /v1/ai/feedback
 
   @override
   void initState() {
@@ -443,7 +525,19 @@ class _AiDecideTabState extends State<_AiDecideTab> {
             Expanded(
               child: CardStack(
                 cards: cards,
-                onSwipe: (c, a) => debugPrint('${c.title} → $a'),
+                onSwipe: (c, a) {
+                  // Map SwipeAction → backend action enum. The unauthed
+                  // public `aiSuggest` returns no sessionId, so feedback
+                  // is best-effort here; the real ranker-learning loop
+                  // runs in the Hi-Fi card stack (see _hifi_demo.dart).
+                  final action = switch (a) {
+                    SwipeAction.skip => 'skip',
+                    SwipeAction.save => 'save',
+                    SwipeAction.openDetail => 'view',
+                    SwipeAction.later => 'view',
+                  };
+                  _api.aiFeedback(sessionId: _sessionId, foodId: c.foodId, action: action);
+                },
                 onCtaTap: (c, a) async {
                   final q = Uri.encodeComponent(c.title);
                   if (a == 'order') {
@@ -712,43 +806,43 @@ class _ProfileTab extends StatefulWidget {
 
   static Future<List<HNotification>> buildNotifications() async {
     final api = HnagApi();
-    final r = await api.aiMoodSuggest('happy');
-    final t = await api.trendingFoods();
-    final now = DateTime.now();
-    final items = <HNotification>[];
-    if (r.foods.isNotEmpty) {
-      final top = r.foods.first;
-      items.add(HNotification(
-        id: 'ai-${top['id']}',
-        type: 'ai_suggest',
-        title: 'Hà gợi ý: ${top['name_vi']}',
-        body: r.theme.isNotEmpty ? r.theme : 'Món hợp tâm trạng bạn lúc này',
-        createdAt: now,
-      ));
+    // Audit workflow-trace §10: the backend has a real `notifications` table
+    // + NotificationsController; we now fetch it directly instead of
+    // synthesising from AI + trending + streak (which made all "notifications"
+    // arrive instantly and never actually represent the user's inbox).
+    final rows = await api.myNotifications();
+    if (rows.isNotEmpty) {
+      final now = DateTime.now();
+      return rows.map((r) {
+        final createdRaw = r['created_at'];
+        final createdAt = createdRaw is String
+            ? (DateTime.tryParse(createdRaw) ?? now)
+            : now;
+        return HNotification(
+          id: (r['id'] as String?) ?? 'unknown',
+          type: (r['type'] as String?) ?? 'general',
+          title: (r['title'] as String?) ?? '',
+          body: (r['body'] as String?) ?? '',
+          createdAt: createdAt,
+        );
+      }).toList();
     }
-    if (t.isNotEmpty) {
-      final top = t.first;
-      items.add(HNotification(
-        id: 'trend-${top['id']}',
-        type: 'social_like',
-        title: '🔥 ${top['name_vi']} đang trending',
-        body: 'Trending score ${top['trending_score']} — ${top['rating_count']} reviews',
-        createdAt: now.subtract(const Duration(hours: 2)),
-      ));
-    }
+    // Cold-start fallback for users with an empty inbox: synthesise from
+    // streak so the screen isn't empty on day one. Real notifications
+    // replace these as soon as any push / system event lands.
     final streak = await api.myStreak();
-    if (streak != null) {
-      final dailyDecide = (streak['daily_decide'] as int?) ?? 0;
-      if (dailyDecide > 0) {
-        items.add(HNotification(
-          id: 'streak-${dailyDecide}', type: 'streak',
-          title: '🔥 Streak $dailyDecide ngày!',
-          body: 'Bạn đã quyết định cùng Hà $dailyDecide ngày liên tiếp. Best: ${streak['best_decide'] ?? dailyDecide}',
-          createdAt: now.subtract(const Duration(hours: 8)),
-        ));
-      }
-    }
-    return items;
+    if (streak == null) return [];
+    final dailyDecide = (streak['daily_decide'] as int?) ?? 0;
+    if (dailyDecide == 0) return [];
+    final now = DateTime.now();
+    return [
+      HNotification(
+        id: 'streak-${dailyDecide}', type: 'streak',
+        title: '🔥 Streak $dailyDecide ngày!',
+        body: 'Bạn đã quyết định cùng Hà $dailyDecide ngày liên tiếp. Best: ${streak['best_decide'] ?? dailyDecide}',
+        createdAt: now.subtract(const Duration(hours: 8)),
+      ),
+    ];
   }
 
   @override

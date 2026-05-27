@@ -1,10 +1,15 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import IORedis from 'ioredis';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { REDIS } from '../../common/redis/redis.module';
 
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(REDIS) private readonly redis: IORedis,
+  ) {}
 
   async me(userId: string) {
     // Audit hnag-audit-2026-05 §11: was 6 sequential queries (~800ms cold).
@@ -48,11 +53,37 @@ export class UsersService {
     for (const [k, v] of Object.entries(prefs ?? {})) {
       if (UsersService.ALLOWED_PREF_KEYS.has(k)) clean[k] = v;
     }
-    return this.prisma.user_preferences.upsert({
+    const out = await this.prisma.user_preferences.upsert({
       where: { user_id: userId },
       update: clean as any,
       create: { user_id: userId, ...(clean as any) },
     });
+    // Audit workflow-trace §18: AI suggest cache (`ai:suggest:userId:*`) has
+    // a 5min TTL. After a prefs change the orchestrator would still serve
+    // the OLD recommendations until that window passes. Invalidate now.
+    // Also drop the user taste vector cache so the next suggest reloads
+    // food_dna from DB.
+    void this.invalidateAiCacheForUser(userId).catch((err) =>
+      this.logger.warn(`AI cache invalidate failed for ${userId}: ${(err as Error).message}`),
+    );
+    return out;
+  }
+
+  /**
+   * Drop all `ai:suggest:<userId>:*` cache entries + the taste vector.
+   * SCAN-based so it scales without blocking Redis on a KEYS match.
+   */
+  private async invalidateAiCacheForUser(userId: string): Promise<void> {
+    const patterns = [`ai:suggest:${userId}:*`, `ai:reason:${userId}:*`];
+    for (const pattern of patterns) {
+      let cursor = '0';
+      do {
+        const [next, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+        cursor = next;
+        if (keys.length) await this.redis.del(...keys);
+      } while (cursor !== '0');
+    }
+    await this.redis.del(`user:taste:${userId}`).catch(() => null);
   }
 
   async follow(followerId: string, followeeId: string) {

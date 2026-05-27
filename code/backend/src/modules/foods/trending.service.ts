@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import IORedis from 'ioredis';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { REDIS } from '../../common/redis/redis.module';
 
 /**
  * Computes a REAL trending_score from recent user interactions.
@@ -12,15 +14,33 @@ import { PrismaService } from '../../common/prisma/prisma.service';
  * Cold-start safety: foods with no recent interactions are left untouched (we do
  * NOT zero the whole catalog while the app is pre-launch). As soon as real
  * interactions exist, those foods get a genuine, normalized 0–100 score.
+ *
+ * Distributed lock (audit workflow-trace §20): with backend-2 replica the cron
+ * runs in BOTH processes hourly → two parallel UPDATEs on `foods` with the
+ * same result. We use Redis SET NX EX as a single-flight gate keyed on the
+ * hour bucket; only one replica's call survives, the other returns fast.
  */
 @Injectable()
 export class TrendingService {
   private readonly logger = new Logger(TrendingService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(REDIS) private readonly redis: IORedis,
+  ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
   async recompute(): Promise<void> {
+    // Distributed lock — bucket by hour, 55-minute TTL so a stuck job
+    // releases before the next cron tick. SET NX guarantees only one
+    // replica claims the slot.
+    const bucket = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+    const lockKey = `cron:trending:${bucket}`;
+    const claimed = await this.redis.set(lockKey, '1', 'EX', 55 * 60, 'NX');
+    if (claimed !== 'OK') {
+      this.logger.debug(`trending recompute skipped — another replica is doing this bucket (${bucket})`);
+      return;
+    }
     try {
       const affected = await this.prisma.$executeRawUnsafe(`
         WITH scored AS (

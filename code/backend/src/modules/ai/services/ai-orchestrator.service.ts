@@ -269,6 +269,17 @@ export class AiOrchestratorService {
     rating?: number;
     reason?: string;
   }) {
+    // Audit workflow-trace §17: prior code had no idempotency, so a
+    // double-tap from the client created two `food_interactions` rows,
+    // doubling the skip-counter / taste-vector update. Use a short
+    // Redis SETNX gate keyed on (session,food,action) — within 30s, a
+    // second call is dropped.
+    const idemKey = `ai:fb:${input.sessionId}:${input.foodId}:${input.action}`;
+    const claimed = await this.redis.set(idemKey, '1', 'EX', 30, 'NX');
+    if (claimed !== 'OK') {
+      this.logger.debug(`feedback dedup ${idemKey}`);
+      return;
+    }
     // Persist feedback
     await this.prisma.food_interactions.create({
       data: {
