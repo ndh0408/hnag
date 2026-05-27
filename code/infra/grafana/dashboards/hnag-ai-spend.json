@@ -1,0 +1,83 @@
+{
+  "title": "HNAG · AI Spend",
+  "description": "OpenAI token cost rollups. Source: /metrics scrape (hnag_ai_spend_*) + /admin/ai-spend report.",
+  "tags": ["hnag", "ai", "cost"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Today's spend (USD)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "hnag_ai_spend_usd_today", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "options": { "graphMode": "area" }
+    },
+    {
+      "id": 2,
+      "title": "Distinct users today",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "hnag_ai_spend_users_today", "refId": "A" }],
+      "options": { "graphMode": "area" }
+    },
+    {
+      "id": 3,
+      "title": "Cost / user / day (USD avg)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{
+        "expr": "hnag_ai_spend_usd_today / clamp_min(hnag_ai_spend_users_today, 1)",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 5 } }
+    },
+    {
+      "id": 4,
+      "title": "Projected monthly burn (USD)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "hnag_ai_spend_usd_today * 30", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "value" }
+    },
+    {
+      "id": 5,
+      "title": "Spend over time (USD)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 4 },
+      "targets": [{ "expr": "hnag_ai_spend_usd_today", "refId": "A", "legendFormat": "today" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4 } }
+    }
+  ]
+}

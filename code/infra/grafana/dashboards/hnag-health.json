@@ -1,0 +1,110 @@
+{
+  "title": "HNAG · Health & Resources",
+  "description": "Backend process health, DB/Redis liveness, queue depth, memory. Source: /metrics scrape.",
+  "tags": ["hnag", "health"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Uptime (sec)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "hnag_process_uptime_seconds", "refId": "A" }],
+      "options": { "graphMode": "area", "colorMode": "value" }
+    },
+    {
+      "id": 2,
+      "title": "DB up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 0 },
+      "targets": [{ "expr": "hnag_db_up", "refId": "A" }],
+      "options": { "graphMode": "none", "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "UP" }, "0": { "text": "DOWN" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Redis up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 0 },
+      "targets": [{ "expr": "hnag_redis_up", "refId": "A" }],
+      "options": { "graphMode": "none", "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "UP" }, "0": { "text": "DOWN" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "DB probe latency",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "hnag_db_probe_latency_seconds", "refId": "A", "legendFormat": "db" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 5,
+      "title": "Redis probe latency",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "hnag_redis_probe_latency_seconds", "refId": "A", "legendFormat": "redis" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 6,
+      "title": "Memory (RSS / heap)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "expr": "hnag_process_memory_bytes{type=\"rss\"}", "refId": "A", "legendFormat": "rss" },
+        { "expr": "hnag_process_memory_bytes{type=\"heap_used\"}", "refId": "B", "legendFormat": "heap_used" },
+        { "expr": "hnag_process_memory_bytes{type=\"heap_total\"}", "refId": "C", "legendFormat": "heap_total" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 7,
+      "title": "Queue depth (waiting + delayed)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "hnag_bullmq_jobs{state=\"waiting\"}", "refId": "A", "legendFormat": "{{queue}} waiting" },
+        { "expr": "hnag_bullmq_jobs{state=\"delayed\"}", "refId": "B", "legendFormat": "{{queue}} delayed" },
+        { "expr": "hnag_bullmq_jobs{state=\"failed\"}", "refId": "C", "legendFormat": "{{queue}} failed" }
+      ],
+      "alert": {
+        "name": "Queue backed up",
+        "for": "5m",
+        "conditions": [
+          { "evaluator": { "type": "gt", "params": [50] }, "operator": { "type": "and" }, "query": { "model": { "expr": "max(hnag_bullmq_jobs{state=\"waiting\"})" }, "params": ["A"] }, "reducer": { "type": "last" }, "type": "query" }
+        ]
+      }
+    }
+  ]
+}

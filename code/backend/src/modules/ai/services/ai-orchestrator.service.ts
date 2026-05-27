@@ -55,11 +55,30 @@ export class AiOrchestratorService {
       }
     }
 
-    // Cache by (user, context-hash)
+    // Cache by (user, context-hash) — exact-match short-window cache.
+    // Audit production-killer §6 ("semantic cache / duplicate request
+    // suppression"): the next layer up is single-flight, below.
     const contextHash = hash(JSON.stringify({ mode: req.mode, ctx: req.context, limit: req.limit }));
     const cacheKey = `ai:suggest:${req.userId}:${contextHash}`;
     const cached = await this.redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
+
+    // Single-flight dedup — concurrent identical requests should NOT all
+    // hit the LLM. The first claim wins (`SET NX EX 10s`); the rest poll
+    // the cache key for up to 5s and return the winner's result. Bounds
+    // the worst-case wait so a stuck LLM call doesn't pile up.
+    const inflightKey = `ai:inflight:${req.userId}:${contextHash}`;
+    const acquired = await this.redis.set(inflightKey, '1', 'EX', 10, 'NX');
+    if (acquired !== 'OK') {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const winner = await this.redis.get(cacheKey);
+        if (winner) return JSON.parse(winner);
+      }
+      // Winner still hasn't published after 5s — fall through and compute
+      // ourselves rather than block the user any longer.
+      this.logger.warn(`/ai/suggest single-flight timeout user=${req.userId} hash=${contextHash}`);
+    }
 
     const t0 = Date.now();
 
@@ -154,10 +173,32 @@ export class AiOrchestratorService {
       _scores: c.scores,
     }));
 
-    const response = { sessionId, cards, reasonCodes: finalTop.flatMap((c) => c.reasonCodes) };
+    // Degraded mode marker — flag when we couldn't reach LLM and fell
+    // back to static captions. Client can show "Hà đang nghỉ trưa" copy
+    // instead of pretending the LLM picked the cards.
+    // Audit production-killer §10 "degraded mode": the suggest endpoint
+    // must surface its own degradation so the UI doesn't lie about it.
+    const degraded = wantLlmSelect && !usedLlmForSelect;
+    const degradedReasons: string[] = [];
+    if (degraded) degradedReasons.push('llm_unavailable');
+    if (!allowLlm) degradedReasons.push('budget_exhausted');
+
+    const response: Record<string, unknown> = {
+      sessionId,
+      cards,
+      reasonCodes: finalTop.flatMap((c) => c.reasonCodes),
+    };
+    if (degraded || degradedReasons.length > 0) {
+      response.degraded = degraded;
+      response.degradedReasons = degradedReasons;
+    }
 
     // Cache
     await this.redis.setex(cacheKey, this.cacheTtlSec, JSON.stringify(response));
+    // Release the single-flight lock so concurrent waiters can read the
+    // cache key. Done in parallel — even if it fails the lock has a
+    // 10s TTL that auto-expires.
+    await this.redis.del(inflightKey).catch(() => null);
 
     // Log + per-session cost
     const latencyMs = Date.now() - t0;
