@@ -98,6 +98,24 @@ export class LlmReasonService {
   private readonly logger = new Logger(LlmReasonService.name);
   private readonly client: OpenAI | null;
 
+  /**
+   * Audit incident-readiness §2 (AI provider timeout): circuit breaker
+   * prevents 30min of failing OpenAI from costing us 30min × users worth
+   * of 8s waits. After N consecutive failures within the window we OPEN
+   * and short-circuit to fallback for the cooldown duration, then probe.
+   *
+   * Tunable via env:
+   *   LLM_BREAKER_FAIL_THRESHOLD   (default 5)
+   *   LLM_BREAKER_WINDOW_MS        (default 60000)
+   *   LLM_BREAKER_COOLDOWN_MS      (default 30000)
+   */
+  private breakerFailCount = 0;
+  private breakerWindowStart = 0;
+  private breakerOpenUntil = 0;
+  private readonly breakerFailThreshold = Number(process.env.LLM_BREAKER_FAIL_THRESHOLD ?? '5');
+  private readonly breakerWindowMs = Number(process.env.LLM_BREAKER_WINDOW_MS ?? '60000');
+  private readonly breakerCooldownMs = Number(process.env.LLM_BREAKER_COOLDOWN_MS ?? '30000');
+
   constructor(
     @Inject(REDIS) private readonly redis: IORedis,
     private readonly prompts: PromptRegistry,
@@ -112,6 +130,38 @@ export class LlmReasonService {
           maxRetries: 1,
         })
       : null;
+  }
+
+  /** Returns true when the breaker is OPEN (calls should skip the LLM). */
+  private breakerIsOpen(): boolean {
+    const now = Date.now();
+    if (this.breakerOpenUntil > now) return true;
+    return false;
+  }
+
+  /** Record a successful LLM call — resets the failure window. */
+  private breakerOnSuccess(): void {
+    this.breakerFailCount = 0;
+    this.breakerWindowStart = 0;
+    this.breakerOpenUntil = 0;
+  }
+
+  /** Record a failed LLM call — opens the breaker once threshold trips. */
+  private breakerOnFailure(): void {
+    const now = Date.now();
+    if (now - this.breakerWindowStart > this.breakerWindowMs) {
+      this.breakerWindowStart = now;
+      this.breakerFailCount = 0;
+    }
+    this.breakerFailCount += 1;
+    if (this.breakerFailCount >= this.breakerFailThreshold) {
+      this.breakerOpenUntil = now + this.breakerCooldownMs;
+      this.logger.warn(
+        `LLM breaker OPEN after ${this.breakerFailCount} fails — short-circuiting for ${Math.round(this.breakerCooldownMs / 1000)}s`,
+      );
+      // Reset window so the next half-open trial doesn't immediately re-open.
+      this.breakerFailCount = 0;
+    }
   }
 
   async batch(
@@ -142,9 +192,16 @@ export class LlmReasonService {
       return reasons;
     }
 
+    // Audit incident-readiness §2: circuit breaker — skip LLM when open.
+    if (this.breakerIsOpen()) {
+      this.logger.debug('LLM breaker open — using fallback captions');
+      for (const i of missingIdx) reasons[i] = this.fallback(cards[i], ctx);
+      return reasons;
+    }
     const toGenerate = missingIdx.map((i) => cards[i]);
     try {
       const generated = await this.callLlm(toGenerate, ctx, opts?.costTracker);
+      this.breakerOnSuccess();
       const pipe = this.redis.pipeline();
       missingIdx.forEach((idx, j) => {
         reasons[idx] = generated[j] ?? this.fallback(cards[idx], ctx);
@@ -152,6 +209,7 @@ export class LlmReasonService {
       });
       await pipe.exec();
     } catch (e) {
+      this.breakerOnFailure();
       this.logger.warn(`LLM batch failed, using fallback: ${(e as Error).message}`);
       for (const i of missingIdx) reasons[i] = this.fallback(cards[i], ctx);
     }
@@ -172,6 +230,10 @@ export class LlmReasonService {
   ): Promise<{ foodId: string; reason: string }[] | null> {
     const client = this.client;
     if (!client || cards.length === 0) return null;
+    if (this.breakerIsOpen()) {
+      this.logger.debug('LLM breaker open — skip select, ranker diversify fills');
+      return null;
+    }
     const list = cards
       .map((c, i) => `${i}. ${c.title} | ${c.cuisine}, tags: ${c.tags.slice(0, 4).join(',')} | ${c.priceVnd}đ | ${c.rating.avg}★`)
       .join('\n');
@@ -203,6 +265,7 @@ CHỈ trả về index có trong danh sách. JSON: { "picks": [ {"i": 0, "reason
         max_tokens: choice.maxOutputTokens,
       });
       chargeUsage(tracker, completion.usage, choice.model);
+      this.breakerOnSuccess();
       const parsed = JSON.parse(completion.choices[0]?.message?.content ?? '{}');
       const picks: { i: number; reason: string }[] = parsed.picks ?? [];
       const out: { foodId: string; reason: string }[] = [];
@@ -217,6 +280,7 @@ CHỈ trả về index có trong danh sách. JSON: { "picks": [ {"i": 0, "reason
       }
       return out.length ? out : null;
     } catch (e) {
+      this.breakerOnFailure();
       this.logger.warn(`LLM select failed, falling back to ranker: ${(e as Error).message}`);
       return null;
     }

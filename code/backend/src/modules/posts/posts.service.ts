@@ -1,11 +1,19 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import IORedis from 'ioredis';
+
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { REDIS } from '../../common/redis/redis.module';
 
 import { CreatePostDto, CreateStoryDto } from './dto/posts.dto';
 
 @Injectable()
 export class PostsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PostsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(REDIS) private readonly redis: IORedis,
+  ) {}
 
   /**
    * Create a new post.
@@ -29,7 +37,7 @@ export class PostsService {
       : mediaUrl
         ? 'photo'
         : 'text';
-    return this.prisma.posts.create({
+    const post = await this.prisma.posts.create({
       data: {
         user_id: userId,
         type,
@@ -40,30 +48,74 @@ export class PostsService {
         tags: images.length > 1 ? images.slice(1) : [],
       },
     });
+    // Invalidate the shared feed buckets so the new post can appear.
+    this.invalidateSharedFeedCache().catch(() => null);
+    return post;
+  }
+
+  /** Drop the shared feed cache keys. Per-user `following` caches are
+   *  left alone (cheaper to wait 60s than to scan a large keyspace). */
+  private async invalidateSharedFeedCache(): Promise<void> {
+    try {
+      const keys: string[] = [];
+      for (const tab of ['for_you', 'trending', 'nearby']) {
+        // First 3 pages — covers the visible window for almost all users.
+        for (let p = 1; p <= 3; p++) keys.push(`feed:${tab}:${p}`);
+      }
+      if (keys.length) await this.redis.del(...keys);
+    } catch { /* best-effort */ }
   }
 
   async feed(userId: string, tab: 'for_you' | 'following' | 'nearby' | 'trending', page: number) {
     const limit = 20;
     const skip = (page - 1) * limit;
 
+    // Audit incident-readiness §13 (feed overload): cache for 60s. The
+    // `following` tab is per-user; `for_you/trending/nearby` are shared
+    // across all users so we use an anonymous key for them and avoid
+    // N× duplicate work during a traffic spike.
+    const cacheKey = tab === 'following'
+      ? `feed:following:${userId}:${page}`
+      : `feed:${tab}:${page}`;
+
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        try { return JSON.parse(cached); } catch {
+          // Bad JSON — drop + recompute.
+          await this.redis.del(cacheKey).catch(() => null);
+        }
+      }
+    } catch (err) {
+      // Redis blip — fall through to DB. Don't cascade.
+      this.logger.debug(`feed cache read err: ${(err as Error).message}`);
+    }
+
+    let rows: any[];
     if (tab === 'following') {
       const follows = await this.prisma.follows.findMany({ where: { follower_id: userId } });
       const followeeIds = follows.map((f) => f.followee_id);
       if (followeeIds.length === 0) return [];
-      return this.prisma.posts.findMany({
+      rows = await this.prisma.posts.findMany({
         where: { user_id: { in: followeeIds }, is_archived: false },
         orderBy: { created_at: 'desc' },
         take: limit, skip,
         include: { users: { select: { id: true, username: true, display_name: true, avatar_url: true } } },
       });
+    } else {
+      // for_you / trending — sort by recent + engagement
+      rows = await this.prisma.posts.findMany({
+        where: { is_archived: false },
+        orderBy: [{ like_count: 'desc' }, { created_at: 'desc' }],
+        take: limit, skip,
+        include: { users: { select: { id: true, username: true, display_name: true, avatar_url: true } } },
+      });
     }
-    // for_you / trending — sort by recent + engagement
-    return this.prisma.posts.findMany({
-      where: { is_archived: false },
-      orderBy: [{ like_count: 'desc' }, { created_at: 'desc' }],
-      take: limit, skip,
-      include: { users: { select: { id: true, username: true, display_name: true, avatar_url: true } } },
-    });
+
+    // Best-effort cache write. 60s TTL — short enough that new posts
+    // appear within a minute; long enough to absorb spike load.
+    this.redis.setex(cacheKey, 60, JSON.stringify(rows)).catch(() => null);
+    return rows;
   }
 
   async detail(id: string) {

@@ -58,12 +58,13 @@ export class AiOrchestratorService {
     }
 
     // Cache by (user, context-hash) — exact-match short-window cache.
-    // Audit production-killer §6 ("semantic cache / duplicate request
-    // suppression"): the next layer up is single-flight, below.
     const contextHash = hash(JSON.stringify({ mode: req.mode, ctx: req.context, limit: req.limit }));
     const cacheKey = `ai:suggest:${req.userId}:${contextHash}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return JSON.parse(cached);
+    // Audit incident-readiness §10 ("cache corruption"): wrap JSON.parse
+    // in try/catch + auto-DEL on parse fail so a corrupted key stops
+    // poisoning the next 5 minutes of suggests for this user.
+    const cached = await this.safeReadJson(cacheKey);
+    if (cached) return cached;
 
     // Org-wide LLM cost kill switch (audit #8): refuse to call OpenAI at all
     // when the global daily spend has crossed OPENAI_DAILY_HARD_CAP_USD. The
@@ -83,8 +84,8 @@ export class AiOrchestratorService {
       // through to compute. Was 10 × 500ms = 5s of busy-waiting per request.
       for (let attempt = 0; attempt < 6; attempt++) {
         await new Promise((r) => setTimeout(r, 250));
-        const winner = await this.redis.get(cacheKey);
-        if (winner) return JSON.parse(winner);
+        const winner = await this.safeReadJson(cacheKey);
+        if (winner) return winner;
       }
       this.logger.warn(`/ai/suggest single-flight timeout user=${req.userId} hash=${contextHash}`);
     }
@@ -444,6 +445,32 @@ export class AiOrchestratorService {
         this.logger.debug(`persistSessionAsync failed (${args.sessionId}): ${(err as Error).message}`);
       }
     })();
+  }
+
+  /**
+   * Read a JSON-encoded Redis value with corruption protection.
+   * If the stored value won't parse, DEL it and return null so the
+   * caller falls through to recompute. Audit incident-readiness §10:
+   * previously bad JSON in cache poisoned every request for the next
+   * 5 minutes (until TTL expired).
+   */
+  private async safeReadJson<T = unknown>(key: string): Promise<T | null> {
+    let raw: string | null;
+    try {
+      raw = await this.redis.get(key);
+    } catch (err) {
+      // Redis blip — don't cascade, just miss the cache.
+      this.logger.debug(`safeReadJson(${key}) redis err: ${(err as Error).message}`);
+      return null;
+    }
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      this.logger.warn(`safeReadJson(${key}) bad JSON — DEL + recompute`);
+      this.redis.del(key).catch(() => null);
+      return null;
+    }
   }
 
   /**
