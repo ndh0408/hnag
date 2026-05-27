@@ -58,16 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_family
 -- The `idx_auth_sessions_user_active` partial in 10_indexes.sql remains for
 -- the per-user active-session list.
 
-COMMENT ON COLUMN auth_sessions.absolute_expires_at IS
-  'Hard cap on the entire refresh chain. Never extends. After this point '
-  || 'the user must re-authenticate (OTP / Apple), even if their last refresh '
-  || 'token is still within its rolling 30d window.';
-COMMENT ON COLUMN auth_sessions.family_id IS
-  'Every descendant of the initial login carries the SAME family_id. Reuse '
-  || 'detection revokes the whole family. (Audit #5 — refresh-chain hijack.)';
-COMMENT ON COLUMN auth_sessions.rotation_count IS
-  'Number of times this chain has been rotated. > 100 in 30d means a stuck '
-  || 'client; surface in monitoring.';
+COMMENT ON COLUMN auth_sessions.absolute_expires_at IS 'Hard cap on the entire refresh chain. Never extends. After this point the user must re-authenticate (OTP / Apple), even if their last refresh token is still within its rolling 30d window.';
+COMMENT ON COLUMN auth_sessions.family_id IS 'Every descendant of the initial login carries the SAME family_id. Reuse detection revokes the whole family. (Audit #5 — refresh-chain hijack.)';
+COMMENT ON COLUMN auth_sessions.rotation_count IS 'Number of times this chain has been rotated. > 100 in 30d means a stuck client; surface in monitoring.';
 
 -- ============================================================================
 -- DONE.

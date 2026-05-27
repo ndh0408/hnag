@@ -27,11 +27,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_users_apple_sub
   ON users (apple_sub)
   WHERE apple_sub IS NOT NULL;
 
-COMMENT ON COLUMN users.apple_sub IS
-  'Apple Sign-In stable subject (jwt.sub from verified identityToken). '
-  || 'Auth path keys SSO upserts on THIS column, never on the synthesised '
-  || 'apple+sub@hnag.internal email (audit #12 — account-hijack via email '
-  || 'pre-registration). Set only by AuthService.signInWithApple().';
+COMMENT ON COLUMN users.apple_sub IS 'Apple Sign-In stable subject (jwt.sub from verified identityToken). Auth path keys SSO upserts on THIS column, never on the synthesised apple+sub@hnag.internal email (audit #12). Set only by AuthService.signInWithApple().';
 
 -- ── Backfill (best-effort) ─────────────────────────────────────────────────
 -- Map existing synthetic-email rows to their apple_sub. The synthetic email
