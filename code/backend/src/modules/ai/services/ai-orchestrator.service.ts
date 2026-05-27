@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid';
 
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { REDIS } from '../../../common/redis/redis.module';
+import { AnalyticsService } from '../../../common/analytics/analytics.service';
 
 import { TasteMemoryService } from './taste-memory.service';
 import { MoodEngineService } from './mood-engine.service';
@@ -35,6 +36,7 @@ export class AiOrchestratorService {
     private readonly candidates: CandidateGeneratorService,
     private readonly ranker: RankerService,
     private readonly reason: LlmReasonService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -191,6 +193,24 @@ export class AiOrchestratorService {
       await this.redis.expire(dayKey, 7 * 24 * 3600);
     }
 
+    // Product analytics — fire-and-forget so the suggest call doesn't block
+    // on the analytics_events insert. Used downstream for retention dashboards,
+    // recommendation CTR, AI acceptance rate (prompt-pack §11 / audit §4).
+    this.analytics.track({
+      event: 'ai:suggest',
+      userId: req.userId,
+      sessionId,
+      properties: {
+        mode: req.mode,
+        cardCount: cards.length,
+        latencyMs,
+        llmUsed: usedLlmForSelect,
+        llmCalls: costTracker.calls,
+        llmCostUsd: Number(costTracker.costUsd.toFixed(6)),
+        isPremium: req.isPremium,
+      },
+    });
+
     return response;
   }
 
@@ -245,6 +265,19 @@ export class AiOrchestratorService {
     if (['save', 'order', 'dine', 'cook'].includes(input.action)) {
       await this.bumpDecideStreak(input.userId);
     }
+
+    // Analytics — `ai:feedback` is the canonical event for computing AI
+    // acceptance rate, swipe-reject rate, save-through-rate per session.
+    this.analytics.track({
+      event: `ai:feedback:${input.action}`,
+      userId: input.userId,
+      sessionId: input.sessionId,
+      properties: {
+        foodId: input.foodId,
+        action: input.action,
+        rating: input.rating,
+      },
+    });
   }
 
   async matchViralLink(input: { userId: string; url: string; location?: { lat: number; lng: number } }) {

@@ -4,9 +4,11 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import { PremiumGuard } from './common/guards/premium.guard';
+import { RolesGuard } from './common/guards/roles.guard';
+import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor';
 import { QueuesModule } from './common/queues/queues.module';
-import { FeatureFlagsService } from './common/config/feature-flags.service';
-import { AnalyticsService } from './common/analytics/analytics.service';
+import { FeatureFlagsModule } from './common/config/feature-flags.module';
+import { AnalyticsModule } from './common/analytics/analytics.module';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -97,6 +99,10 @@ import { MealModule } from './modules/meal/meal.module';
     // the auth + notifications routes return without blocking on SMTP/FCM
     // round-trips. Audit hnag-audit-2026-05 §9.
     QueuesModule,
+
+    // Cross-cutting concerns made injectable everywhere via @Global().
+    AnalyticsModule,
+    FeatureFlagsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },
@@ -104,10 +110,10 @@ import { MealModule } from './modules/meal/meal.module';
     // It's exported here so any module's controller can pull it in via
     // the @Premium() composite decorator without per-module provider wiring.
     PremiumGuard,
-    FeatureFlagsService,
-    AnalyticsService,
+    RolesGuard,
+    AuditLogInterceptor,
   ],
-  exports: [PremiumGuard, FeatureFlagsService, AnalyticsService],
+  exports: [PremiumGuard, RolesGuard, AuditLogInterceptor],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

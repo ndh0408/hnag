@@ -14,6 +14,8 @@ import { ContextBuilderService } from './services/context-builder.service';
 import { EmbeddingService } from './services/embedding.service';
 import { FridgeService } from './services/fridge.service';
 import { VoiceService } from './services/voice.service';
+import { ModelRouter } from './services/model-router.service';
+import { PromptRegistry } from './prompts/prompt-registry.service';
 
 @Module({
   imports: [HttpModule, AuthModule],
@@ -29,7 +31,9 @@ import { VoiceService } from './services/voice.service';
     EmbeddingService,
     FridgeService,
     VoiceService,
+    PromptRegistry,
+    ModelRouter,
   ],
-  exports: [AiOrchestratorService, TasteMemoryService, EmbeddingService],
+  exports: [AiOrchestratorService, TasteMemoryService, EmbeddingService, PromptRegistry, ModelRouter],
 })
 export class AiModule {}

@@ -1,10 +1,12 @@
-import { Body, Controller, HttpCode, Post, HttpException, HttpStatus } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, Ip, Post, HttpException, HttpStatus } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
+import { createHash } from 'crypto';
 
 // Email + phone OTP. Apple SSO via identity-token validation.
 const SendEmailOtpDto = z.object({
@@ -66,15 +68,28 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly otp: OtpService,
+    private readonly analytics: AnalyticsService,
   ) {}
+
+  private hashEmail(email: string): string {
+    return createHash('sha256').update(email.toLowerCase().trim()).digest('hex').slice(0, 16);
+  }
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('email-otp/send')
   @HttpCode(200)
-  async sendEmailOtp(@Body(new ZodValidationPipe(SendEmailOtpDto)) body: z.infer<typeof SendEmailOtpDto>) {
+  async sendEmailOtp(
+    @Body(new ZodValidationPipe(SendEmailOtpDto)) body: z.infer<typeof SendEmailOtpDto>,
+    @Ip() ip: string,
+  ) {
     // SECURITY (audit hnag-audit-2026-05): never spread `out` into the
     // response — `devCode` MUST NOT appear in the body under any environment.
     await this.otp.sendEmail(body.email, 'login');
+    // Analytics: email hashed so log retention satisfies PDPL.
+    this.analytics.track({
+      event: 'auth:otp_send',
+      properties: { method: 'email', emailHash: this.hashEmail(body.email), ipHash: this.hashEmail(ip ?? '') },
+    });
     return { sent: true };
   }
 
@@ -83,8 +98,20 @@ export class AuthController {
   @HttpCode(200)
   async verifyEmailOtp(@Body(new ZodValidationPipe(VerifyEmailOtpDto)) body: z.infer<typeof VerifyEmailOtpDto>) {
     const verified = await this.otp.verifyEmail(body.email, body.code, 'login');
-    if (!verified) throw new InvalidOtpException();
-    return this.auth.signInWithEmail(body.email, body.device);
+    if (!verified) {
+      this.analytics.track({
+        event: 'auth:otp_verify',
+        properties: { method: 'email', success: false, reason: 'invalid' },
+      });
+      throw new InvalidOtpException();
+    }
+    const session = await this.auth.signInWithEmail(body.email, body.device);
+    this.analytics.track({
+      event: 'auth:otp_verify',
+      userId: session.user.id,
+      properties: { method: 'email', success: true },
+    });
+    return session;
   }
 
   @Post('refresh')

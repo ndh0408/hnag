@@ -12,8 +12,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// RBAC role enum — see sql/14_user_roles.sql. Promotion happens via SQL,
+/// not via API. The `@Roles()` decorator reads this column live on every
+/// guarded request so demoted admins lose access immediately.
+enum user_role {
+  user
+  owner
+  creator
+  moderator
+  support
+  admin
+  super_admin
+}
+
 model users {
   id              String   @id @default(uuid()) @db.Uuid
+  role            user_role @default(user)
   phone           String?  @unique
   phone_hash      String?  @unique
   email           String?  @unique

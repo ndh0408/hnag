@@ -8,6 +8,7 @@ import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { EnvelopeInterceptor } from './common/interceptors/envelope.interceptor';
+import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { isProd } from './common/config/secrets';
 import { httpLogger } from './common/config/logger';
@@ -65,7 +66,13 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-  app.useGlobalInterceptors(new EnvelopeInterceptor());
+  // Order matters: AuditLogInterceptor runs FIRST so it can observe both
+  // successful + envelope-wrapped responses. Envelope runs after audit so
+  // the audit log sees the unwrapped raw value.
+  app.useGlobalInterceptors(
+    app.get(AuditLogInterceptor),
+    new EnvelopeInterceptor(),
+  );
   app.useGlobalFilters(new AllExceptionsFilter());
 
   // API prefix

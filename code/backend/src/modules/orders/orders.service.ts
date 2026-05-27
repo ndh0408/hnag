@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 
 type OrderStatus = 'intent' | 'placed' | 'cooking' | 'picking' | 'delivering' | 'done' | 'cancelled';
 
@@ -11,6 +12,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeGateway,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async createIntent(userId: string, dto: { foodId: string; restaurantId?: string; preferredPartner?: string }) {
@@ -48,6 +50,18 @@ export class OrdersService {
         restaurant_id: restaurant.id,
         items: [{ foodId: dto.foodId }] as any,
         status: 'intent',
+      },
+    });
+
+    this.analytics.track({
+      event: 'order:intent',
+      userId,
+      properties: {
+        orderId: order.id,
+        foodId: dto.foodId,
+        restaurantId: restaurant.id,
+        partner,
+        partnersAvailable: Object.keys(links).length,
       },
     });
 

@@ -6,10 +6,8 @@ import { createHash } from 'crypto';
 import { REDIS } from '../../../common/redis/redis.module';
 import { Candidate } from './candidate-generator.service';
 import { EnrichedContext } from './context-builder.service';
-
-const SYSTEM = `Bạn là Hà — trợ lý ẩm thực HNAG. Viết 1 câu (≤25 từ) giải thích vì sao mỗi món hợp với user.
-Tone tự nhiên đứa bạn, không quảng cáo, không bắt đầu bằng "Vì" hoặc "Bởi vì".
-Có thể gợi cảm xúc qua hình ảnh: "tô ấm bụng", "giòn rụm", "ngon hết sảy".`;
+import { PromptRegistry } from '../prompts/prompt-registry.service';
+import { ModelRouter } from './model-router.service';
 
 /**
  * gpt-4o-mini pricing (per 1M tokens, in USD) as of 2026-05.
@@ -63,7 +61,11 @@ export class LlmReasonService {
   private readonly logger = new Logger(LlmReasonService.name);
   private readonly client: OpenAI | null;
 
-  constructor(@Inject(REDIS) private readonly redis: IORedis) {
+  constructor(
+    @Inject(REDIS) private readonly redis: IORedis,
+    private readonly prompts: PromptRegistry,
+    private readonly router: ModelRouter,
+  ) {
     this.client = process.env.OPENAI_API_KEY
       ? new OpenAI({
           apiKey: process.env.OPENAI_API_KEY,
@@ -147,15 +149,21 @@ Chọn ${limit} món hợp NHẤT với ngữ cảnh, đa dạng (không trùng 
 CHỈ trả về index có trong danh sách. JSON: { "picks": [ {"i": 0, "reason": "..."}, ... ] }`;
 
     try {
+      const prompt = this.prompts.get('reason.select');
+      const choice = this.router.pick(prompt, {
+        isPremium: false, // caller hasn't threaded tier through yet — accept the cheap pick
+        mode: undefined,
+        withinBudget: true,
+      });
       const completion = await client.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: choice.model,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: 'Bạn là Hà — chọn món ăn cho người Việt. Chỉ chọn trong danh sách được cho, không bịa.' },
+          { role: 'system', content: prompt.system },
           { role: 'user', content: user },
         ],
         temperature: 0.4,
-        max_tokens: 500,
+        max_tokens: choice.maxOutputTokens,
       });
       chargeUsage(tracker, completion.usage);
       const parsed = JSON.parse(completion.choices[0]?.message?.content ?? '{}');
@@ -191,15 +199,21 @@ ${cards.map((c, i) => `${i + 1}. ${c.title} | ${c.cuisine}, tags: ${c.tags.slice
 YÊU CẦU: mỗi món 1 câu ≤25 từ; mỗi lý do KHÁC NHAU.
 Trả JSON: { "reasons": [{"food_idx": 1, "reason": "..."}, ...] }.`;
 
+    const prompt = this.prompts.get('reason.caption');
+    const choice = this.router.pick(prompt, {
+      isPremium: false,
+      mode: undefined,
+      withinBudget: true,
+    });
     const completion = await this.client!.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: choice.model,
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: SYSTEM },
+        { role: 'system', content: prompt.system },
         { role: 'user', content: user },
       ],
       temperature: 0.5,
-      max_tokens: 300,
+      max_tokens: choice.maxOutputTokens,
     });
     chargeUsage(tracker, completion.usage);
 

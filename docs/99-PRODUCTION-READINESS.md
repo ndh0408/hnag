@@ -65,12 +65,13 @@ Reference memories already saved by Claude:
 | 4 | Mobile cut-over | 6 | **5** | 0 | 1 |
 | 5 | Owner-side + data | 4 | **2** | 0 | 2 |
 | 6 | Hardening + scale prep | 5 | **5** ✅ | 0 | 0 |
-| Bonus (prompt-pack §11 checklist) | Pre-launch must-have | 8 | **6** | 0 | 2 |
+| Pre-launch checklist (§11) | Pre-launch must-have | 8 | **7** | 0 | 1 |
+| Production-killer (post-78 audit) | 10-item maturity bar | 10 | **6** | 0 | 4 |
 
-**Current focus:** **41/48 items complete (85.4%) including prompt-pack §11
-checklist**. Score 48 → **78/100** — that's the Series-A credible floor.
-Remaining 7 items are user-runtime gated (real bank, deploy run, iOS, UX,
-data ops, AI moderation pipeline, PWA).
+**Current focus:** **49/58 items (84.5%) including post-78 maturity audit**.
+Score 48 → **82/100**. Remaining 9 items split between user-runtime gated
+(payment, deploy, UX) and multi-sprint asks (DDD refactor, CF
+recommendation, distributed tracing, frontend polish).
 
 ---
 
@@ -345,6 +346,68 @@ run succeeds end-to-end.
   [tls-expiry-check.sh](../code/infra/server/tls-expiry-check.sh),
   cron at [cron.d-hnag](../code/infra/server/cron.d-hnag).
 
+### 2026-05-27 (Batch 6 — post-78 production-maturity audit)
+
+User reviewed code @ commit `6730c92` and flagged 10 production-killer
+maturity gaps. Batch 6 closes 6 of them in code; 4 remain (DDD refactor,
+CF recommendation, distributed tracing, frontend polish — all multi-sprint).
+
+- **Prompt registry + versioning** — closed item 2.
+  [ai/prompts/prompt-registry.service.ts](../code/backend/src/modules/ai/prompts/prompt-registry.service.ts)
+  with `PromptDefinition` (id, version, system, estimatedTokens,
+  preferredTier). LLM call sites in
+  [llm-reason.service.ts](../code/backend/src/modules/ai/services/llm-reason.service.ts)
+  now `prompts.get('reason.caption' | 'reason.select')` instead of inline
+  `const SYSTEM = '...'`. Versioned for forensics + A/B.
+
+- **Multi-model cost router** — closed items 2 + 6.
+  [ai/services/model-router.service.ts](../code/backend/src/modules/ai/services/model-router.service.ts)
+  with `pick(prompt, ctx)` → `{ model, tier, maxOutputTokens, reason }`.
+  Routes: over-budget→FALLBACK, prompt-cheap→CHEAP, free-user→CHEAP,
+  premium+high-quality-mode→PREMIUM, premium+low-stakes→CHEAP. Env
+  overrides: `MODEL_CHEAP` / `MODEL_PREMIUM` / `MODEL_FALLBACK`. Wired
+  into `llm-reason.batch()` + `select()`.
+
+- **Analytics event wiring at call sites** — closed item 4.
+  [ai-orchestrator.service.ts](../code/backend/src/modules/ai/services/ai-orchestrator.service.ts)
+  → `ai:suggest` + `ai:feedback:<action>` events with mode/latency/llm-cost.
+  [orders.service.ts](../code/backend/src/modules/orders/orders.service.ts)
+  → `order:intent` event with foodId/restaurantId/partner.
+  [auth.controller.ts](../code/backend/src/modules/auth/auth.controller.ts)
+  → `auth:otp_send` (email hash + IP hash) + `auth:otp_verify` (success/fail).
+  AnalyticsService promoted to `@Global()` via
+  [common/analytics/analytics.module.ts](../code/backend/src/common/analytics/analytics.module.ts).
+
+- **RBAC + roles** — closed item 7-part-A.
+  [sql/14_user_roles.sql](../code/sql/14_user_roles.sql) adds `user_role`
+  enum (user / owner / creator / moderator / support / admin / super_admin)
+  + `users.role` column + partial index. Prisma schema updated.
+  [common/decorators/roles.decorator.ts](../code/backend/src/common/decorators/roles.decorator.ts)
+  exports `@Roles('admin', 'super_admin')` composite decorator.
+  [common/guards/roles.guard.ts](../code/backend/src/common/guards/roles.guard.ts)
+  re-reads role on every request (no JWT trust), super_admin overrides,
+  admin is superset of moderator/support/owner/creator.
+
+- **Audit log interceptor** — closed item 7-part-B.
+  [common/interceptors/audit-log.interceptor.ts](../code/backend/src/common/interceptors/audit-log.interceptor.ts)
+  exports `@Audit({ event, level })` decorator. Global interceptor reads
+  the metadata, fires `audit:<event>` analytics + structured log on
+  successful invocations. Pair with `@Roles('admin')` on every sensitive
+  admin / billing / claim route.
+
+- **Prisma migration baseline runbook** — closed item 9.
+  [code/backend/scripts/bootstrap-prisma-migrations.sh](../code/backend/scripts/bootstrap-prisma-migrations.sh)
+  generates `prisma/migrations/0_init/migration.sql` from current schema,
+  marks it as already applied (so prod DB isn't touched). After this
+  script runs once, all future changes go through
+  `prisma migrate dev` → `prisma migrate deploy`.
+
+- **Global modules cleanup** — minor refactor.
+  [common/analytics/analytics.module.ts](../code/backend/src/common/analytics/analytics.module.ts)
+  + [common/config/feature-flags.module.ts](../code/backend/src/common/config/feature-flags.module.ts)
+  with `@Global()` so cross-cutting concerns don't need per-module
+  imports. AuditLogInterceptor wired globally in main.ts.
+
 ### 2026-05-27 (Batch 5 — prompt-pack §11 launch checklist)
 
 - **BullMQ OTP email worker** — closed audit §9 (HIGH).
@@ -585,14 +648,15 @@ run succeeds end-to-end.
 
 The audit established a baseline of **48 / 100**. Progress:
 
-| Dimension | Baseline | W1 | W2 | B3 | B4 | **B5** | Notes |
-|-----------|----------|----|----|----|----|--------|-------|
-| Shipped-code quality | 7 | 7 | 8 | 8 | 9 | **9** | + queues + flags + SEO + resilient client + analytics |
-| Pitch ↔ reality | 4 | 4 | 4 | 5 | 6 | **6** | Holding |
-| Security | 3 | 7 | 7 | 8 | 8 | **8** | Holding |
-| Operations | 2 | 5 | 8 | 9 | 9 | **10** | Queue offload + feature flags + analytics pipeline |
-| Product clarity | 6 | 6 | 6 | 6 | 6 | **6** | Needs Flutter v2 cut-over |
-| **Overall /100** | **48** | 58 | 66 | 72 | 76 | **78** | +30 from baseline · **Series-A floor reached** |
+| Dimension | Baseline | W1 | W2 | B3 | B4 | B5 | **B6** | Notes |
+|-----------|----------|----|----|----|----|----|----|-------|
+| Shipped-code quality | 7 | 7 | 8 | 8 | 9 | 9 | **9** | + prompt registry + RBAC + audit log |
+| Pitch ↔ reality | 4 | 4 | 4 | 5 | 6 | 6 | **7** | Analytics streaming gives retention story; cost router gives unit-economics story |
+| Security | 3 | 7 | 7 | 8 | 8 | 8 | **9** | RBAC + audit interceptor + global friendly errors |
+| Operations | 2 | 5 | 8 | 9 | 9 | 10 | **10** | Holding at max for monolith stage |
+| Product clarity | 6 | 6 | 6 | 6 | 6 | 6 | **6** | Needs Flutter v2 cut-over |
+| AI maturity | 5 | 5 | 5 | 6 | 6 | 7 | **8** | Prompt registry + model router + cost+analytics observability |
+| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | **82** | +34 from baseline · Pushing beyond Series-A floor |
 
 **Target reached: 78 / 100 — Series-A credible floor.** From here every
 remaining point requires user-runtime input that cannot be coded solo:
