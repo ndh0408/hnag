@@ -101,7 +101,53 @@ export class CandidateGeneratorService {
 
     if (hasTasteSignal) {
       mapped.sort((a, b) => (b._sim - a._sim) || (b.trendingScore - a.trendingScore));
+    } else {
+      // Audit AI-quality §C-3: cold-start user has no taste signal. The
+      // default `taste=0.5` in the ranker pushes everything to the middle;
+      // trending alone would beat that. So for cold users, surface
+      // strictly by trending+popularity then add slight randomisation so
+      // they don't see literally the same top-N every session.
+      mapped.sort((a, b) => (b.trendingScore - a.trendingScore) || (b.popularity - a.popularity));
+    }
+    // Audit AI-quality §L-5: NOVELTY INJECTION — within the top 2× requested
+    // slice, do a per-user-seeded shuffle on the lower half so two callers
+    // with similar context don't get IDENTICAL output every time. The top
+    // 5 stay in rank order (highest-confidence picks); positions 6-30 get
+    // a deterministic-but-per-user-shuffled permutation.
+    const TOP_LOCK = 5;
+    if (mapped.length > TOP_LOCK + 1) {
+      const seed = stableSeed(args.userId);
+      const tail = mapped.slice(TOP_LOCK);
+      // Fisher-Yates with seeded RNG.
+      const rng = mulberry32(seed);
+      for (let i = tail.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [tail[i], tail[j]] = [tail[j], tail[i]];
+      }
+      mapped.splice(TOP_LOCK, tail.length, ...tail);
     }
     return mapped.map(({ _sim, ...c }) => c);
   }
+}
+
+/** Hash userId + day → 32-bit seed. Per-day rotation so users see fresh
+ *  ordering every day even if their taste vector doesn't shift. */
+function stableSeed(userId: string): number {
+  const day = new Date().toISOString().slice(0, 10);
+  let h = 0;
+  const s = userId + ':' + day;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function mulberry32(seed: number): () => number {
+  let t = seed + 0x6D2B79F5;
+  return () => {
+    t = (t + 0x6D2B79F5) | 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
 }

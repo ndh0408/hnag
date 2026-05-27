@@ -76,14 +76,79 @@ class HnagApi {
     }
   }
 
-  /// Smart context-aware AI suggestion (no auth needed).
-  Future<List<Map<String, dynamic>>> aiSuggest({int? hour, int? budgetMax, int limit = 8}) async {
+  /// Smart context-aware AI suggestion.
+  ///
+  /// Audit AI-quality §C-1: when the user is authenticated, route to the
+  /// full orchestrator (`/v1/ai/suggest`) so they actually get the LLM
+  /// caption, taste-embedding personalisation, mood bias, skip-memory
+  /// penalty, diversity injection, and a `sessionId` that wires swipe
+  /// feedback back into the ranker. Falls back to the public heuristic
+  /// endpoint only for guest / signed-out users.
+  Future<List<Map<String, dynamic>>> aiSuggest({
+    int? hour,
+    int? budgetMax,
+    int limit = 8,
+    String mode = 'quick',
+  }) async {
+    if (AuthService.instance.isAuthed) {
+      final r = await aiSuggestSession(
+        mode: mode,
+        hour: hour,
+        budgetMax: budgetMax,
+        limit: limit,
+      );
+      // Caller expecting List<Map> — return the cards. sessionId is captured
+      // via `aiSuggestSession` if caller wants it for feedback wiring.
+      return r?.cards ?? [];
+    }
     final uri = Uri.parse('$baseUrl/v1/ai/suggest-public').replace(queryParameters: {
       if (hour != null) 'hour': hour.toString(),
       if (budgetMax != null) 'budget': budgetMax.toString(),
       'limit': limit.toString(),
     });
     return _fetchList(uri);
+  }
+
+  /// Full AI suggest response (cards + sessionId + degraded reasons).
+  /// Authed only; returns null for guest users.
+  Future<({String sessionId, List<Map<String, dynamic>> cards, bool degraded, List<String> degradedReasons})?>
+      aiSuggestSession({
+    String mode = 'quick',
+    int? hour,
+    int? budgetMax,
+    int limit = 8,
+    Map<String, dynamic>? context,
+  }) async {
+    if (!AuthService.instance.isAuthed) return null;
+    try {
+      final body = <String, dynamic>{
+        'mode': mode,
+        'context': {
+          if (hour != null) 'hour': hour,
+          if (budgetMax != null) 'budget': {'min': 0, 'max': budgetMax},
+          ...?context,
+        },
+        'limit': limit,
+      };
+      final r = await AuthService.instance.authedRequest((h) => http.post(
+            Uri.parse('$baseUrl/v1/ai/suggest'),
+            headers: {...h, 'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          ).timeout(const Duration(seconds: 18)));
+      if (r.statusCode != 200) return null;
+      final root = jsonDecode(r.body) as Map<String, dynamic>;
+      final data = root['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      return (
+        sessionId: (data['sessionId'] as String?) ?? '',
+        cards: ((data['cards'] as List?) ?? []).cast<Map<String, dynamic>>(),
+        degraded: (data['degraded'] as bool?) ?? false,
+        degradedReasons: ((data['degradedReasons'] as List?) ?? const []).cast<String>(),
+      );
+    } catch (e) {
+      debugPrint('HNAG_API aiSuggestSession error: $e');
+      return null;
+    }
   }
 
   /// Mood-based suggestion. Returns (theme, foods).

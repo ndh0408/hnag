@@ -4,6 +4,7 @@ import {
   Get,
   Post,
   Req,
+  Ip,
   UseGuards,
   Headers,
   HttpCode,
@@ -69,6 +70,20 @@ export class SubscriptionsController {
   }
 
   /**
+   * Cancel auto-renewal — keeps premium active until current_period_end,
+   * then expires naturally. Audit AI-quality §C-6: previously no
+   * endpoint, user had to email admin to cancel.
+   */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('cancel')
+  @HttpCode(200)
+  cancel(@CurrentUser() u: JwtPayload, @Body() body: { reason?: string }) {
+    return this.subs.cancel(u.sub, body?.reason);
+  }
+
+  /**
    * SePay bank-transfer webhook.
    *
    * Security stack:
@@ -88,6 +103,7 @@ export class SubscriptionsController {
   sepayWebhook(
     @Req() req: Request & { rawBody?: Buffer },
     @Body() body: any,
+    @Ip() ip: string,
     @Headers('authorization') auth?: string,
     @Headers('x-hnag-signature') sigHnag?: string,
     @Headers('x-sepay-signature') sigSepay?: string,
@@ -95,6 +111,6 @@ export class SubscriptionsController {
     const token = auth?.replace(/^(Bearer|Apikey)\s+/i, '') ?? auth;
     const signature = sigHnag ?? sigSepay;
     const raw = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(body);
-    return this.subs.handleSepayWebhook(body, raw, token, signature);
+    return this.subs.handleSepayWebhook(body, raw, token, signature, ip);
   }
 }

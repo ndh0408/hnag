@@ -82,10 +82,24 @@ export class EmbeddingService implements OnModuleInit {
     return map;
   }
 
-  /** Embed any foods missing an embedding. Idempotent; cheap after first run. */
+  /** Embed any foods missing an embedding. Idempotent; cheap after first run.
+   *
+   *  Audit AI-quality §M-4: previously triggered from `onModuleInit` AND
+   *  `@Cron(4am)` AND on every replica. With backend-2 added, two
+   *  replicas booting at the same time both ran `backfillFoods()` → 2x
+   *  OpenAI embedding spend. Now we acquire a Redis SETNX lease at the
+   *  start; only one replica per day-bucket runs the work, others skip.
+   */
   @Cron(CronExpression.EVERY_DAY_AT_4AM)
   async backfillFoods(): Promise<number> {
     if (!this.client) return 0;
+    const day = new Date().toISOString().slice(0, 10);
+    const lockKey = `cron:emb-backfill:${day}`;
+    const claimed = await this.redis.set(lockKey, '1', 'EX', 6 * 3600, 'NX');
+    if (claimed !== 'OK') {
+      this.logger.debug(`embedding backfill skipped — another replica owns ${day}`);
+      return 0;
+    }
     const foods = await this.prisma.foods.findMany({ where: { status: 'active' } });
     if (!foods.length) return 0;
     const existing = await this.redis.mget(...foods.map((f) => `food:emb:${f.id}`));

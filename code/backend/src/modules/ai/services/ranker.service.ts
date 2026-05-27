@@ -103,17 +103,24 @@ export class RankerService {
         scores.skipMemory = skipPenalty;
         if (skipPenalty < 0.5) codes.push('rejection_memory_penalty');
 
+        // Audit AI-quality §C-2: include moodBoost from MoodEngineService.
+        // Previously the engine sorted candidates by moodBoost but the
+        // ranker immediately re-sorted by `final` which didn't reference
+        // moodBoost — so the mood-engine pass was a no-op.
+        const moodBoost = typeof c.scores?.moodBoost === 'number' ? c.scores.moodBoost : 0;
+
         // Final blend (taste embedding now carries real personalization weight)
         const finalRaw =
-          scores.taste * 0.22 +
-          scores.cuisine * 0.13 +
-          scores.price * 0.12 +
-          scores.time * 0.08 +
-          scores.mood * 0.13 +
-          scores.weather * 0.08 +
-          scores.quality * 0.12 +
-          scores.trending * 0.07 +
-          scores.lateNight * 0.05;
+          scores.taste * 0.20 +
+          scores.cuisine * 0.12 +
+          scores.price * 0.11 +
+          scores.time * 0.07 +
+          scores.mood * 0.12 +
+          scores.weather * 0.07 +
+          scores.quality * 0.11 +
+          scores.trending * 0.06 +
+          scores.lateNight * 0.05 +
+          moodBoost * 0.09;
         const final = finalRaw * skipPenalty;
 
         scores.final = final;

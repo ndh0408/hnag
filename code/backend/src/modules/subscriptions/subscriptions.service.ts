@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { createHmac, timingSafeEqual, createHash } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
@@ -132,7 +133,21 @@ export class SubscriptionsService implements OnModuleInit {
     rawBody: string,
     authToken?: string,
     signature?: string,
+    sourceIp?: string,
   ): Promise<{ ok: boolean; matched?: boolean; duplicate?: boolean }> {
+    // ── 0. Source IP allowlist (audit AI-quality §M-8) ─────────────────
+    // SePay publishes their egress IPs. Restrict here so a leaked
+    // bearer token alone isn't sufficient — caller must also be on
+    // SEPAY_ALLOWED_IPS (comma-separated CIDR list; empty = allow any).
+    const allowedIps = (process.env.SEPAY_ALLOWED_IPS ?? '').split(',').map(s => s.trim()).filter(Boolean);
+    if (allowedIps.length > 0) {
+      const ip = (sourceIp ?? '').trim();
+      if (!ip || !allowedIps.some((a) => ipMatches(ip, a))) {
+        this.logger.warn(`SePay webhook from ${ip || 'unknown'} not in allowlist`);
+        throw new ForbiddenException('Source IP not allowed');
+      }
+    }
+
     // ── 1. Bearer token ────────────────────────────────────────────────
     const expected = process.env.SEPAY_WEBHOOK_TOKEN;
     if (!expected) {
@@ -286,6 +301,61 @@ export class SubscriptionsService implements OnModuleInit {
     });
   }
 
+  /**
+   * Cancel auto-renewal. Audit AI-quality §C-6: was no endpoint. Premium
+   * remains active until `current_period_end`, then expires naturally via
+   * the cron below. No proration — VietQR / promo plans are pre-paid.
+   */
+  async cancel(userId: string, reason?: string) {
+    const sub = await this.prisma.subscriptions.findFirst({
+      where: { user_id: userId, status: 'active' },
+      orderBy: { created_at: 'desc' },
+    });
+    if (!sub) {
+      throw new NotFoundException('Không có gói đang hoạt động để huỷ');
+    }
+    if (sub.cancelled_at) {
+      return { ok: true, alreadyCancelled: true, expiresAt: sub.current_period_end };
+    }
+    await this.prisma.subscriptions.update({
+      where: { id: sub.id },
+      data: {
+        cancelled_at: new Date(),
+        cancel_reason: (reason ?? '').slice(0, 200) || null,
+        auto_renew: false,
+      },
+    });
+    this.logger.log(`Sub ${sub.id} (user ${userId}) cancelled — expires ${sub.current_period_end}`);
+    return { ok: true, expiresAt: sub.current_period_end };
+  }
+
+  /**
+   * Hourly sweep: any user whose `premium_until` has passed AND who is
+   * still flagged `is_premium=true` gets demoted. Audit AI-quality §C-7:
+   * previously the flag stayed true forever; `PremiumGuard` denied in
+   * real time but `users.is_premium` lied — affected analytics, JWT
+   * claims on next refresh, and any other reader of the column.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async expirePremiumCron(): Promise<void> {
+    try {
+      const now = new Date();
+      const affected = await this.prisma.$executeRawUnsafe(
+        `UPDATE users
+            SET is_premium = false
+          WHERE is_premium = true
+            AND premium_until IS NOT NULL
+            AND premium_until < $1::timestamptz`,
+        now,
+      );
+      if (affected && Number(affected) > 0) {
+        this.logger.log(`Premium expiration sweep: demoted ${affected} users`);
+      }
+    } catch (err) {
+      this.logger.warn(`expirePremiumCron failed: ${(err as Error).message}`);
+    }
+  }
+
   async myStatus(userId: string) {
     const [user, sub] = await Promise.all([
       this.prisma.users.findUnique({
@@ -379,9 +449,30 @@ function safeEqualStr(a: string, b: string): boolean {
 
 /** Stable 32-bit hash of a string for use as pg_advisory_xact_lock keys. */
 function hash32(s: string): number {
-  // Take first 4 bytes of SHA-256; interpret as signed Int32 (postgres int).
   const buf = createHash('sha256').update(s).digest();
-  // Read signed Int32 BE — bit-twiddle to keep it in JS-safe range.
   const u = buf.readUInt32BE(0);
   return u > 0x7fffffff ? u - 0x100000000 : u;
+}
+
+/** Match an IP against an allowlist entry — plain IP equality or CIDR. */
+function ipMatches(ip: string, pattern: string): boolean {
+  if (!ip || !pattern) return false;
+  // Drop IPv6 mapping prefix Cloudflare sometimes adds.
+  const clean = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+  if (!pattern.includes('/')) return clean === pattern;
+  // Naive IPv4 CIDR check — enough for whitelisting a payment provider's
+  // /24 published ranges. IPv6 + complex CIDR can use `ip-address` lib.
+  const [base, bitsStr] = pattern.split('/');
+  const bits = Number(bitsStr);
+  if (!Number.isFinite(bits) || bits < 0 || bits > 32) return false;
+  const toInt = (v: string): number | null => {
+    const parts = v.split('.').map((n) => Number(n));
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return null;
+    return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+  };
+  const ipInt = toInt(clean);
+  const baseInt = toInt(base);
+  if (ipInt === null || baseInt === null) return false;
+  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+  return (ipInt & mask) === (baseInt & mask);
 }
