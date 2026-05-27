@@ -19,8 +19,11 @@ export class FoodsService {
     // so users can write natural phrases ("phở bò gân"), and unaccent so
     // "pho" matches "phở". The dictionary 'simple' is used by the stored
     // generated column too.
+    //
+    // We rank-then-fetch in two passes so the heavy SELECT excludes the
+    // tsvector column (Prisma cannot deserialize that type), while the
+    // tsvector-aware step still feeds it into ts_rank.
     if (opts.q && opts.q.trim().length > 0) {
-      // Tag-style filters still need explicit ANDs.
       const conditions: string[] = [];
       const params: any[] = [];
       const push = (clause: string, value: any) => {
@@ -32,15 +35,27 @@ export class FoodsService {
       if (opts.category) push(`f.category = $$`, opts.category);
       if (opts.maxPrice) push(`f.avg_price_vnd <= $$::int`, Math.max(0, Math.round(opts.maxPrice)));
       const where = `f.status = 'active' AND ${conditions.join(' AND ')}`;
-      const sql = `
-        SELECT f.*,
-               ts_rank(f.search_tsv, websearch_to_tsquery('simple', f_unaccent($1))) AS _rank
-        FROM foods f
-        WHERE ${where}
-        ORDER BY _rank DESC, f.trending_score DESC, f.popularity DESC
-        LIMIT $${params.length + 1}::int OFFSET $${params.length + 2}::int
-      `;
-      return this.prisma.$queryRawUnsafe<any[]>(sql, ...params, limit, skip);
+      // Step 1: ids ordered by FTS rank — tsvector stays inside the CTE so
+      // the outer SELECT never returns it to Prisma.
+      const matches = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+        `WITH ranked AS (
+           SELECT id, ts_rank(search_tsv, websearch_to_tsquery('simple', f_unaccent($1))) AS rk,
+                  trending_score, popularity
+           FROM foods f
+           WHERE ${where}
+         )
+         SELECT id::text AS id FROM ranked
+         ORDER BY rk DESC, trending_score DESC, popularity DESC
+         LIMIT $${params.length + 1}::int OFFSET $${params.length + 2}::int`,
+        ...params, limit, skip,
+      );
+      if (matches.length === 0) return [];
+      // Step 2: hydrate via the typed client (no tsvector in result), then
+      // preserve the rank order from step 1.
+      const ids = matches.map((m) => m.id);
+      const rows = await this.prisma.foods.findMany({ where: { id: { in: ids } } });
+      const byId = new Map(rows.map((r) => [r.id, r] as const));
+      return ids.map((id) => byId.get(id)).filter(Boolean);
     }
 
     return this.prisma.foods.findMany({

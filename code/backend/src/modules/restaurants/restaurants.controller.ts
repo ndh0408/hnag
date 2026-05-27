@@ -29,6 +29,7 @@ export class RestaurantsController {
     @Query('priceLevel') priceLevel?: string,
     @Query('cuisine') cuisine?: string,
     @Query('minRating') minRating?: string,
+    @Query('limit') limit?: string,
   ) {
     return this.r.nearby({
       lat: parseFloat(lat),
@@ -38,6 +39,7 @@ export class RestaurantsController {
       priceLevel: priceLevel ? parseInt(priceLevel) : undefined,
       cuisine,
       minRating: minRating ? parseFloat(minRating) : undefined,
+      limit: limit ? parseInt(limit) : undefined,
     });
   }
 

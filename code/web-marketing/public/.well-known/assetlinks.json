@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "vn.hnag.hnag",
+      "sha256_cert_fingerprints": [
+        "REPLACE_WITH_KEYSTORE_FINGERPRINT_RUN_keytool_-list_-v_-keystore_release.jks_-alias_hnag"
+      ]
+    }
+  }
+]
