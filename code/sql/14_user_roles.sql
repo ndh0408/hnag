@@ -46,9 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_users_role
   ON users (role)
   WHERE role <> 'user';
 
-COMMENT ON COLUMN users.role IS
-  'RBAC role. Default user; promote via UPDATE statement, not via API. ' ||
-  'See @Roles() decorator in code/backend/src/common/decorators/roles.decorator.ts.';
+COMMENT ON COLUMN users.role IS 'RBAC role. Default user; promote via UPDATE statement, not via API. See @Roles() decorator in code/backend/src/common/decorators/roles.decorator.ts.';
 
 -- ── Bootstrap (run manually after applying schema) ─────────────────────────
 -- Promote the founding admin(s). Replace email below.
