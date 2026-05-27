@@ -32,6 +32,7 @@ import 'screens/search_screen.dart';
 import 'screens/food_detail_screen.dart';
 import 'screens/meal_planner_screen.dart';
 import 'screens/nearby_restaurants_screen.dart';
+import 'observability/crash_reporter.dart';
 
 /// Mapbox PUBLIC token (pk.*) — safe to embed in the app binary (Mapbox public
 /// tokens are designed for client-side use). Override at build time with
@@ -43,6 +44,10 @@ const _mapboxToken = String.fromEnvironment(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Crash reporting BEFORE any other init so early-boot errors get
+  // captured. No-ops cleanly when sentry_flutter isn't installed yet.
+  await CrashReporter.init();
+  CrashReporter.install();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     systemNavigationBarColor: Colors.transparent,

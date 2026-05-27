@@ -76,7 +76,7 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   // API prefix
-  app.setGlobalPrefix('v1', { exclude: ['/health', '/graphql'] });
+  app.setGlobalPrefix('v1', { exclude: ['/health', '/graphql', '/metrics'] });
 
   // WebSocket with Redis adapter (cross-pod fanout)
   const wsAdapter = new RedisIoAdapter(app);

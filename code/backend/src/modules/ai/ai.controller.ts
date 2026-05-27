@@ -8,6 +8,7 @@ import { AiOrchestratorService } from './services/ai-orchestrator.service';
 import { FridgeService } from './services/fridge.service';
 import { VoiceService, audioExtFromMime } from './services/voice.service';
 import { ModerationService } from './services/moderation.service';
+import { AiCooldown, AiCooldownGuard } from '../../common/guards/ai-cooldown.guard';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -113,7 +114,13 @@ export class AiController {
   }
 
   // Free users: 10/min · premium: unlimited (enforced inside orchestrator)
+  // + 2s per-user cooldown so double-tap / mash-refresh doesn't burn the
+  // daily LLM budget (audit production-killer §9). Throttle is per-IP;
+  // cooldown is per-user, so abuse from one account behind shared IP is
+  // still blocked even when the throttle bucket has headroom.
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(AiCooldownGuard)
+  @AiCooldown(2000)
   @Post('suggest')
   @HttpCode(200)
   async suggest(

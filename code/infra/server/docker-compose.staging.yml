@@ -1,0 +1,155 @@
+# =============================================================================
+# HNAG STAGING stack
+# -----------------------------------------------------------------------------
+# Audit production-killer §9 ("Staging environment chuẩn"). Until now the
+# only environment was prod (docker-compose.prod.yml) — engineers tested
+# changes against the live DB or not at all. Staging gives us:
+#
+#   - a parallel stack on the same host, isolated by container_name +
+#     network suffix + own volumes (no risk of clobbering prod data)
+#   - separate ports if we ever expose them locally (we don't — cloudflared)
+#   - separate hnag.env file (./hnag.staging.env) so secrets don't cross
+#   - separate cloudflared tunnel → api-stage.tothanhthuy.cloud
+#
+# Apply against `develop` branch builds (see backend-deploy.yml). Schema
+# migrations should always go through staging first.
+#
+# Run:
+#   docker compose --env-file hnag.staging.env \
+#       -f docker-compose.staging.yml --project-name hnag-stage up -d
+#
+# Tear down (preserves volumes):
+#   docker compose -f docker-compose.staging.yml --project-name hnag-stage down
+#
+# Wipe staging data:
+#   docker compose -f docker-compose.staging.yml --project-name hnag-stage down -v
+# =============================================================================
+name: hnag-stage
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    container_name: hnag-stage-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hnag_stage
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_stage_password
+      POSTGRES_DB: hnag_stage
+    volumes:
+      - pg_stage_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hnag_stage"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    secrets: [postgres_stage_password]
+    networks: [hnag-stage-internal]
+    deploy:
+      resources:
+        limits: { memory: 1G }
+
+  redis:
+    image: redis:7-alpine
+    container_name: hnag-stage-redis
+    restart: unless-stopped
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+      - "--save"
+      - "300"
+      - "100"
+      - "--maxmemory"
+      - "256mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+    volumes:
+      - redis_stage_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [hnag-stage-internal]
+    deploy:
+      resources:
+        limits: { memory: 384M }
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: hnag-stage-pgbouncer
+    restart: unless-stopped
+    environment:
+      DB_HOST: hnag-stage-postgres
+      DB_PORT: "5432"
+      DB_USER: hnag_stage
+      DB_PASSWORD_FILE: /run/secrets/postgres_stage_password
+      DB_NAME: hnag_stage
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "10"
+      RESERVE_POOL_SIZE: "5"
+      AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres: { condition: service_healthy }
+    secrets: [postgres_stage_password]
+    networks: [hnag-stage-internal]
+    deploy:
+      resources:
+        limits: { memory: 128M }
+
+  backend:
+    # Use the develop tag in staging — points at HEAD of `develop` branch
+    # via backend-deploy.yml workflow. Overrideable with HNAG_BACKEND_IMAGE.
+    image: ${HNAG_BACKEND_IMAGE:-ghcr.io/${GHCR_OWNER:-yourname}/hnag-backend:develop}
+    container_name: hnag-stage-backend
+    restart: unless-stopped
+    env_file:
+      - ./hnag.staging.env
+    environment:
+      NODE_ENV: staging
+      DATABASE_URL: "postgresql://hnag_stage:${POSTGRES_STAGE_PASSWORD}@hnag-stage-pgbouncer:6432/hnag_stage?schema=public&pgbouncer=true&connection_limit=10"
+      DIRECT_DATABASE_URL: "postgresql://hnag_stage:${POSTGRES_STAGE_PASSWORD}@hnag-stage-postgres:5432/hnag_stage?schema=public"
+      REDIS_URL: "redis://hnag-stage-redis:6379"
+      PORT: "4000"
+      HNAG_VERSION: "${HNAG_VERSION:-develop}"
+      # Staging-only: surface plaintext OTP in logs so manual QA can copy-paste.
+      OTP_DEV_LOG_PLAIN: "true"
+    depends_on:
+      postgres:  { condition: service_healthy }
+      pgbouncer: { condition: service_started }
+      redis:     { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 40s
+    networks: [hnag-stage-internal]
+    deploy:
+      resources:
+        limits: { cpus: '1', memory: 768M }
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: hnag-stage-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${HNAG_STAGE_TUNNEL_TOKEN}"]
+    networks: [hnag-stage-internal]
+    depends_on: [backend]
+
+volumes:
+  pg_stage_data:
+  redis_stage_data:
+
+secrets:
+  postgres_stage_password:
+    file: ./secrets/postgres_stage_password
+
+networks:
+  hnag-stage-internal:
+    driver: bridge
+    name: hnag-stage-internal

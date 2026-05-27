@@ -44,6 +44,16 @@ export class TasteMemoryService {
    * Critical: never let allergens be reinforced.
    */
   async applyImplicitFeedback(userId: string, foodId: string, action: string, rating?: number) {
+    // Rejection memory — single source of truth for the ranker's
+    // skipPenalty (see ranker.service.ts:fetchSkipPenalties).
+    if (action === 'skip') {
+      try {
+        const key = `skip:${userId}:${foodId}`;
+        const n = await this.redis.incr(key);
+        if (n === 1) await this.redis.expire(key, 7 * 24 * 3600);
+      } catch {/* best-effort */}
+    }
+
     const vec = await this.load(userId);
     const item = await this.itemEmbedding(foodId);
     if (!item) return;

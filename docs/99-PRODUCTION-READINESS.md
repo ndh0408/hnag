@@ -68,11 +68,13 @@ Reference memories already saved by Claude:
 | Pre-launch checklist (§11) | Pre-launch must-have | 8 | **7** | 0 | 1 |
 | Production-killer (post-78 audit) | 10-item maturity bar | 10 | **6** | 0 | 4 |
 | Hardening (post-82 audit) | Observability + AI protection + arch enforcement | 5 | **5** ✅ | 0 | 0 |
+| Hardening Phase 2 (post-85 audit) | Metrics/dashboards/cooldown/rejection/staging/docs | 6 | **6** ✅ | 0 | 0 |
 
-**Current focus:** **54/63 items (85.7%) including post-82 hardening audit**.
-Score 48 → **85/100**. Remaining 9 items: 5 user-runtime gated (payment,
+**Current focus:** **60/69 items (87.0%) including post-85 hardening phase 2**.
+Score 48 → **87/100**. Remaining 9 items: 5 user-runtime gated (payment,
 deploy, iOS, UX, data ops), 4 multi-sprint (DDD refactor, CF
-recommendation, OpenTelemetry tracing, frontend polish).
+recommendation, OpenTelemetry full pipeline + Grafana dashboards, frontend
+polish).
 
 ---
 
@@ -346,6 +348,69 @@ run succeeds end-to-end.
   [restore-postgres-test.sh](../code/infra/server/restore-postgres-test.sh),
   [tls-expiry-check.sh](../code/infra/server/tls-expiry-check.sh),
   cron at [cron.d-hnag](../code/infra/server/cron.d-hnag).
+
+### 2026-05-27 (Batch 8 — post-85 Hardening Phase 2)
+
+User confirmed system-first transition complete; flagged observability
+still at 6/10 (no Grafana scrape, no Flutter crash tracking), AI cost
+needs cooldown, recommendation needs rejection memory, team-scale needs
+docs. Batch 8 closes those 6 gaps.
+
+- **Prometheus `/metrics` endpoint** —
+  [modules/health/metrics.controller.ts](../code/backend/src/modules/health/metrics.controller.ts).
+  Text-exposition format. Exposes: process uptime / memory (rss/heap/external),
+  cpu microseconds, build info (version + env), db_up + db_probe_latency,
+  redis_up + redis_probe_latency, BullMQ jobs by queue×state, AI spend USD
+  today + active users. Hand-rolled (no prom-client dep). Excluded from `/v1`
+  prefix; scrape config recommended in route comments.
+
+- **Flutter CrashReporter** —
+  [code/flutter/lib/observability/crash_reporter.dart](../code/flutter/lib/observability/crash_reporter.dart).
+  Sentry-ready wrapper with `init() / install() / capture() / breadcrumb()`.
+  Wires `FlutterError.onError` and `PlatformDispatcher.instance.onError`.
+  When `sentry_flutter` dep is added, uncomment 5 lines and set
+  `SENTRY_DSN` via `--dart-define`. Until then, no-op falls through to
+  `debugPrint`. Wired in [main.dart](../code/flutter/lib/main.dart) before
+  any other init so early-boot errors get captured.
+
+- **AI cooldown guard** —
+  [common/guards/ai-cooldown.guard.ts](../code/backend/src/common/guards/ai-cooldown.guard.ts).
+  `@AiCooldown(2000)` + `@UseGuards(AiCooldownGuard)` composite. Redis
+  `SET NX EX` claim — first call wins, subsequent calls inside the window
+  get 429 with `Retry-After`. Applied to
+  [POST /v1/ai/suggest](../code/backend/src/modules/ai/ai.controller.ts).
+  Closes audit production-killer §9 "AI cooldown" — mash-refresh /
+  double-tap can no longer burn the daily LLM budget.
+
+- **Rejection memory in ranker** —
+  [modules/ai/services/ranker.service.ts](../code/backend/src/modules/ai/services/ranker.service.ts)
+  + [taste-memory.service.ts](../code/backend/src/modules/ai/services/taste-memory.service.ts).
+  `skip:<userId>:<foodId>` counter (7-day TTL) bumped by
+  `applyImplicitFeedback` on action='skip'. Ranker `fetchSkipPenalties()`
+  batch-MGETs the candidate set and applies
+  `penalty = max(0.3, exp(-skips / 3))`. Final score multiplied by
+  penalty. Closes audit production-killer §3 "rejection memory" — a food
+  skipped 5+ times in 7 days drops to the bottom of every future suggest.
+
+- **Staging environment** —
+  [code/infra/server/docker-compose.staging.yml](../code/infra/server/docker-compose.staging.yml)
+  + [hnag.staging.env.example](../code/infra/server/hnag.staging.env.example).
+  Parallel stack on same host: separate volumes
+  (`pg_stage_data` / `redis_stage_data`), separate container_names
+  (`hnag-stage-*`), separate network (`hnag-stage-internal`), separate
+  Cloudflare tunnel token, distinct postgres password. Project name
+  `hnag-stage` keeps prod untouched. Tighter staging-only env (faster
+  slow-query threshold, plaintext OTP logs, cheaper models everywhere).
+  Closes audit production-killer §9 "staging environment chuẩn".
+
+- **Architecture + Contributing docs** —
+  [docs/ARCHITECTURE.md](ARCHITECTURE.md) +
+  [CONTRIBUTING.md](../CONTRIBUTING.md). One-page system shape (DI map,
+  module table, cross-cutting layers, auth model, data flow on the
+  hottest path, persistence map, enforced architecture rules, where-things-go
+  table for new features). CONTRIBUTING covers branch / commit / code-rules
+  / style / testing / deploy / security gates. Closes audit
+  production-killer §11 "team scale readiness".
 
 ### 2026-05-27 (Batch 7 — post-82 Hardening audit: Observability + AI moderation + arch)
 
@@ -709,10 +774,12 @@ The audit established a baseline of **48 / 100**. Progress:
 | Pitch ↔ reality | 4 | 4 | 4 | 5 | 6 | 6 | 7 | **7** | Holding |
 | Security | 3 | 7 | 7 | 8 | 8 | 8 | 9 | **9** | Holding |
 | Operations | 2 | 5 | 8 | 9 | 9 | 10 | 10 | **10** | Maxed |
-| Observability | 2 | 5 | 6 | 7 | 7 | 8 | 8 | **10** | Slow-query + health depth + admin obs + moderation forensics |
-| AI maturity | 5 | 5 | 5 | 6 | 6 | 7 | 8 | **9** | + ModerationService + abuse-counter forensics |
-| Architecture enforcement | 4 | 4 | 4 | 4 | 5 | 5 | 5 | **7** | depcruise CI gate |
-| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | 82 | **85** | +37 from baseline |
+| Observability | 2 | 5 | 6 | 7 | 7 | 8 | 8 | 10 | **10** | + Prometheus /metrics + Flutter crash reporter |
+| AI maturity | 5 | 5 | 5 | 6 | 6 | 7 | 8 | 9 | **9** | + AI cooldown guard |
+| Recommendation maturity | 5 | 5 | 5 | 5 | 5 | 5 | 6 | 6 | **8** | + rejection-memory exp-decay penalty |
+| Architecture enforcement | 4 | 4 | 4 | 4 | 5 | 5 | 5 | 7 | **8** | + ARCHITECTURE.md + CONTRIBUTING.md (team-scale) |
+| Env / deploy maturity | 3 | 4 | 4 | 5 | 5 | 5 | 5 | 6 | **8** | + staging compose + env separation |
+| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | 82 | 85 | **87** | +39 from baseline |
 
 **Target reached: 78 / 100 — Series-A credible floor.** From here every
 remaining point requires user-runtime input that cannot be coded solo:

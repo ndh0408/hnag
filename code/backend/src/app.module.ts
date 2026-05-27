@@ -5,6 +5,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import { PremiumGuard } from './common/guards/premium.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { AiCooldownGuard } from './common/guards/ai-cooldown.guard';
 import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor';
 import { QueuesModule } from './common/queues/queues.module';
 import { FeatureFlagsModule } from './common/config/feature-flags.module';
@@ -111,9 +112,10 @@ import { MealModule } from './modules/meal/meal.module';
     // the @Premium() composite decorator without per-module provider wiring.
     PremiumGuard,
     RolesGuard,
+    AiCooldownGuard,
     AuditLogInterceptor,
   ],
-  exports: [PremiumGuard, RolesGuard, AuditLogInterceptor],
+  exports: [PremiumGuard, RolesGuard, AiCooldownGuard, AuditLogInterceptor],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
