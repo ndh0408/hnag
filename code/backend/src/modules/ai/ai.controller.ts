@@ -8,6 +8,7 @@ import { AiOrchestratorService } from './services/ai-orchestrator.service';
 import { FridgeService } from './services/fridge.service';
 import { VoiceService, audioExtFromMime } from './services/voice.service';
 import { ModerationService } from './services/moderation.service';
+import { newCostTracker } from './services/llm-reason.service';
 import { AiCooldown, AiCooldownGuard } from '../../common/guards/ai-cooldown.guard';
 import { Premium } from '../../common/guards/premium.guard';
 import { HttpException, HttpStatus } from '@nestjs/common';
@@ -85,6 +86,8 @@ export class AiController {
    * Free users get the text-based `/ai/fridge-recipes` instead.
    */
   @Premium()
+  @UseGuards(AiCooldownGuard)
+  @AiCooldown(3000)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('fridge-scan')
   @HttpCode(200)
@@ -92,8 +95,16 @@ export class AiController {
     @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(FridgeScanDto)) body: z.infer<typeof FridgeScanDto>,
   ) {
-    const detected = await this.fridge.detectIngredients(body.imageBase64, { userId: user.sub });
+    // Audit AI-trace §C-2: track vision spend so org-wide kill switch
+    // + per-user budget sees this call (was: untracked → silent burn).
+    const tracker = newCostTracker();
+    const detected = await this.fridge.detectIngredients(body.imageBase64, {
+      userId: user.sub,
+      tracker,
+    });
     const result = await this.fridge.matchRecipes(detected);
+    // Push spend to the shared spend counters for this user + org.
+    await this.orchestrator.chargeStandaloneCall(user.sub, tracker, 'fridge-scan');
     return { detected, ...result };
   }
 
@@ -104,6 +115,8 @@ export class AiController {
    * single call cannot transcribe > ~60s.
    */
   @Premium()
+  @UseGuards(AiCooldownGuard)
+  @AiCooldown(3000)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('voice')
   @HttpCode(200)
@@ -111,21 +124,27 @@ export class AiController {
     @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(VoiceDto)) body: z.infer<typeof VoiceDto>,
   ) {
+    // Audit AI-trace §C-1: shared cost tracker so Whisper + GPT-4o-mini
+    // intent both feed org spend counters.
+    const tracker = newCostTracker();
     const raw = body.audioBase64.replace(/^data:audio\/[^;]+;base64,/, '');
     const buf = Buffer.from(raw, 'base64');
-    const transcript = await this.voice.transcribe(buf, `audio.${audioExtFromMime(body.mime)}`);
+    const transcript = await this.voice.transcribe(buf, `audio.${audioExtFromMime(body.mime)}`, tracker);
 
-    // Moderation gate: user-supplied audio transcripts could carry abuse /
-    // prompt injection. Check before paying GPT for intent extraction.
     const verdict = await this.moderation.check(transcript, { userId: user.sub });
     if (!verdict.allowed) {
+      // Charge what we already spent (Whisper) even on moderation block.
+      await this.orchestrator.chargeStandaloneCall(user.sub, tracker, 'voice');
       throw new HttpException(
         { code: 'MODERATION_BLOCKED', message: 'Nội dung không phù hợp', reason: verdict.reason },
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
 
-    const intent = await this.voice.intent(transcript);
+    const intent = await this.voice.intent(transcript, tracker);
+    // Charge before the suggest call — suggest has its OWN tracker.
+    await this.orchestrator.chargeStandaloneCall(user.sub, tracker, 'voice');
+
     const result = intent.mood
       ? await this.orchestrator.suggestByMood({ userId: user.sub, isPremium: !!user.isPremium, mood: intent.mood })
       : await this.orchestrator.suggest({ userId: user.sub, isPremium: !!user.isPremium, mode: 'voice', context: { mood: intent.query }, limit: 6 });

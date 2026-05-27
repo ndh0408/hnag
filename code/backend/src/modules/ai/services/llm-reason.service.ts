@@ -10,10 +10,12 @@ import { PromptRegistry } from '../prompts/prompt-registry.service';
 import { ModelRouter } from './model-router.service';
 
 /**
- * gpt-4o-mini pricing (per 1M tokens, in USD) as of 2026-05.
- * Update via OPENAI_PRICING env (`<inputUsd>:<outputUsd>` per 1M) if rates change.
- *   input  → $0.15 / 1M  → 0.00000015 per token
- *   output → $0.60 / 1M  → 0.00000060 per token
+ * Pricing per 1M tokens, in USD as of 2026-05. Used by chargeUsage().
+ * Update via env (`<inputUsd>:<outputUsd>` per 1M) if rates change.
+ *
+ *   gpt-4o-mini   input  $0.15 / 1M    output $0.60 / 1M
+ *   gpt-4o        input  $5.00 / 1M    output $15.00 / 1M
+ *   whisper-1                          $0.006 / minute (charge by duration, not tokens)
  */
 const [OPENAI_INPUT_PER_TOKEN, OPENAI_OUTPUT_PER_TOKEN] = (() => {
   const raw = process.env.OPENAI_PRICING_USD_PER_M ?? '0.15:0.60';
@@ -22,6 +24,11 @@ const [OPENAI_INPUT_PER_TOKEN, OPENAI_OUTPUT_PER_TOKEN] = (() => {
   const ouP = Number.isFinite(o) ? o / 1_000_000 : 0.00000060;
   return [inP, ouP];
 })();
+/** gpt-4o costs ~33x mini — surface separately so cost-router accounting is honest. */
+export const OPENAI_GPT4O_INPUT_PER_TOKEN = Number(process.env.OPENAI_GPT4O_INPUT_USD_PER_M ?? '5.00') / 1_000_000;
+export const OPENAI_GPT4O_OUTPUT_PER_TOKEN = Number(process.env.OPENAI_GPT4O_OUTPUT_USD_PER_M ?? '15.00') / 1_000_000;
+/** Whisper billed by minute, not token. */
+export const OPENAI_WHISPER_USD_PER_MIN = Number(process.env.OPENAI_WHISPER_USD_PER_MIN ?? '0.006');
 
 /**
  * Per-request cost tracker, mutated by every LLM call made during a single
@@ -46,13 +53,43 @@ export function newCostTracker(): LlmCostTracker {
 function chargeUsage(
   tracker: LlmCostTracker | undefined,
   usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined,
+  model?: string,
 ): void {
   if (!tracker || !usage) return;
   const p = usage.prompt_tokens ?? 0;
   const c = usage.completion_tokens ?? 0;
   tracker.promptTokens += p;
   tracker.completionTokens += c;
-  tracker.costUsd += p * OPENAI_INPUT_PER_TOKEN + c * OPENAI_OUTPUT_PER_TOKEN;
+  // Audit AI-trace §C-1/§C-2: per-model pricing so gpt-4o (premium) is
+  // properly charged at 33x the gpt-4o-mini rate. Default to mini.
+  const isGpt4o = (model ?? '').startsWith('gpt-4o') && !(model ?? '').includes('mini');
+  const inRate = isGpt4o ? OPENAI_GPT4O_INPUT_PER_TOKEN : OPENAI_INPUT_PER_TOKEN;
+  const outRate = isGpt4o ? OPENAI_GPT4O_OUTPUT_PER_TOKEN : OPENAI_OUTPUT_PER_TOKEN;
+  tracker.costUsd += p * inRate + c * outRate;
+  tracker.calls += 1;
+}
+
+/** Exported so VoiceService / FridgeService can charge the same tracker. */
+export function chargeOpenaiUsage(
+  tracker: LlmCostTracker | undefined,
+  usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined,
+  model?: string,
+): void {
+  chargeUsage(tracker, usage, model);
+}
+
+/** Whisper is billed by audio minute. Estimate duration from the buffer
+ *  size — a reasonable approximation for opus/m4a/mp3 at ~32-64 kbps
+ *  speech codecs (~5-8 KB/sec). Caller can pass exact duration if known. */
+export function chargeWhisperUsage(
+  tracker: LlmCostTracker | undefined,
+  audioBytes: number,
+  exactSeconds?: number,
+): void {
+  if (!tracker) return;
+  const seconds = exactSeconds ?? Math.max(1, audioBytes / 6500); // ~52 kbps avg
+  const minutes = seconds / 60;
+  tracker.costUsd += minutes * OPENAI_WHISPER_USD_PER_MIN;
   tracker.calls += 1;
 }
 
@@ -165,7 +202,7 @@ CHỈ trả về index có trong danh sách. JSON: { "picks": [ {"i": 0, "reason
         temperature: 0.4,
         max_tokens: choice.maxOutputTokens,
       });
-      chargeUsage(tracker, completion.usage);
+      chargeUsage(tracker, completion.usage, choice.model);
       const parsed = JSON.parse(completion.choices[0]?.message?.content ?? '{}');
       const picks: { i: number; reason: string }[] = parsed.picks ?? [];
       const out: { foodId: string; reason: string }[] = [];
@@ -215,7 +252,7 @@ Trả JSON: { "reasons": [{"food_idx": 1, "reason": "..."}, ...] }.`;
       temperature: 0.5,
       max_tokens: choice.maxOutputTokens,
     });
-    chargeUsage(tracker, completion.usage);
+    chargeUsage(tracker, completion.usage, choice.model);
 
     const raw = completion.choices[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(raw);

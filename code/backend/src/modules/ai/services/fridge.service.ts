@@ -2,6 +2,8 @@ import { Injectable, Logger, BadRequestException, HttpException, HttpStatus } fr
 import OpenAI from 'openai';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { ModerationService } from './moderation.service';
+import { PromptRegistry } from '../prompts/prompt-registry.service';
+import { LlmCostTracker, chargeOpenaiUsage } from './llm-reason.service';
 
 /**
  * Real Fridge Scan: GPT-4o-mini vision detects ingredients from a photo, then we
@@ -21,6 +23,7 @@ export class FridgeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly moderation: ModerationService,
+    private readonly prompts: PromptRegistry,
   ) {
     this.client = process.env.OPENAI_API_KEY
       ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30_000, maxRetries: 1 })
@@ -28,7 +31,7 @@ export class FridgeService {
   }
 
   /** Detect ingredients from a fridge/pantry image (data URL or https URL). */
-  async detectIngredients(image: string, opts: { userId?: string } = {}): Promise<string[]> {
+  async detectIngredients(image: string, opts: { userId?: string; tracker?: LlmCostTracker } = {}): Promise<string[]> {
     const client = this.client;
     if (!client) throw new BadRequestException('Tính năng nhận diện ảnh chưa được bật');
     // Only allow data URLs for our own JPEG/PNG/WEBP, or https URLs hosted on
@@ -49,13 +52,15 @@ export class FridgeService {
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
+    // Audit AI-trace §C-6: system prompt moved to PromptRegistry (versioned).
+    const prompt = this.prompts.get('fridge.detect');
     const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       response_format: { type: 'json_object' },
       temperature: 0.2,
-      max_tokens: 300,
+      max_tokens: prompt.estimatedTokens.output,
       messages: [
-        { role: 'system', content: 'Bạn nhận diện nguyên liệu nấu ăn trong ảnh tủ lạnh/bếp. Chỉ liệt kê nguyên liệu ăn được, tên tiếng Việt thường dùng.' },
+        { role: 'system', content: prompt.system },
         {
           role: 'user',
           content: [
@@ -65,6 +70,9 @@ export class FridgeService {
         },
       ],
     });
+    // Audit AI-trace §C-2: charge vision spend to the shared tracker so
+    // org-wide kill-switch + per-user budget see it.
+    chargeOpenaiUsage(opts.tracker, completion.usage, 'gpt-4o-mini');
     const parsed = JSON.parse(completion.choices[0]?.message?.content ?? '{}');
     const arr: unknown[] = Array.isArray(parsed.ingredients) ? parsed.ingredients : [];
     return Array.from(new Set(

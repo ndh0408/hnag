@@ -12,7 +12,8 @@ import { MoodEngineService } from './mood-engine.service';
 import { ContextBuilderService } from './context-builder.service';
 import { CandidateGeneratorService } from './candidate-generator.service';
 import { RankerService } from './ranker.service';
-import { LlmReasonService, newCostTracker } from './llm-reason.service';
+import { LlmReasonService, newCostTracker, LlmCostTracker } from './llm-reason.service';
+import { ModerationService } from './moderation.service';
 
 export interface SuggestRequest {
   userId: string;
@@ -37,6 +38,7 @@ export class AiOrchestratorService {
     private readonly ranker: RankerService,
     private readonly reason: LlmReasonService,
     private readonly analytics: AnalyticsService,
+    private readonly moderation: ModerationService,
   ) {}
 
   /**
@@ -130,14 +132,26 @@ export class AiOrchestratorService {
     const costTracker = newCostTracker();
 
     // 5a. Let the LLM actually choose for mood/detail flows (validated → no hallucination).
+    // Audit AI-trace §M-9: gate behind a Redis-counter concurrency semaphore
+    // so a traffic burst can't blow past the OpenAI org-level rate limit.
+    let llmSelectSlot = false;
     if (wantLlmSelect) {
-      const picks = await this.reason.select(ranked.slice(0, 15), enriched, req.limit, costTracker);
-      if (picks?.length) {
-        const byId = new Map(ranked.map((c) => [c.foodId, c] as const));
-        for (const p of picks) {
-          const c = byId.get(p.foodId);
-          if (c) { finalTop.push(c); reasons.push(p.reason); }
+      llmSelectSlot = await this.acquireConcurrencySlot();
+      if (llmSelectSlot) {
+        try {
+          const picks = await this.reason.select(ranked.slice(0, 15), enriched, req.limit, costTracker);
+          if (picks?.length) {
+            const byId = new Map(ranked.map((c) => [c.foodId, c] as const));
+            for (const p of picks) {
+              const c = byId.get(p.foodId);
+              if (c) { finalTop.push(c); reasons.push(p.reason); }
+            }
+          }
+        } finally {
+          await this.releaseConcurrencySlot();
         }
+      } else {
+        this.logger.warn(`/ai/suggest concurrency-cap hit user=${req.userId} mode=${req.mode}`);
       }
     }
     const usedLlmForSelect = reasons.some((r) => !!r);
@@ -155,11 +169,42 @@ export class AiOrchestratorService {
     // 6. Fill any empty reasons with captions. If the LLM already chose, use the
     // cheap fallback for the remainder to bound cost.
     if (reasons.some((r) => !r)) {
-      const captions = await this.reason.batch(finalTop, enriched, {
-        allowLlm: allowLlm && !usedLlmForSelect,
-        costTracker,
-      });
-      reasons = finalTop.map((_, i) => (reasons[i] && reasons[i].length ? reasons[i] : (captions[i] ?? '')));
+      let llmBatchSlot = false;
+      const llmBatchWanted = allowLlm && !usedLlmForSelect;
+      if (llmBatchWanted) llmBatchSlot = await this.acquireConcurrencySlot();
+      try {
+        const captions = await this.reason.batch(finalTop, enriched, {
+          allowLlm: llmBatchWanted && llmBatchSlot,
+          costTracker,
+        });
+        reasons = finalTop.map((_, i) => (reasons[i] && reasons[i].length ? reasons[i] : (captions[i] ?? '')));
+      } finally {
+        if (llmBatchSlot) await this.releaseConcurrencySlot();
+      }
+    }
+
+    // Audit AI-trace §C-5: moderate AI-generated captions BEFORE sending to
+    // client. The model can occasionally produce off-tone output (slurs,
+    // hallucinations, jailbreak echo). Strip + replace with a safe fallback.
+    // Moderation is cached + fast — runs once per unique caption text.
+    if (reasons.length > 0) {
+      const safeReasons = await Promise.all(
+        reasons.map(async (r, i) => {
+          if (!r) return r;
+          try {
+            const v = await this.moderation.check(r, { userId: req.userId });
+            if (!v.allowed) {
+              this.logger.warn(`/ai/suggest caption blocked: ${v.reason} — replaced with fallback`);
+              const card = finalTop[i];
+              return card ? `${card.title} — Hà thấy hợp tâm trạng bạn lúc này` : '';
+            }
+            return r;
+          } catch {
+            return r; // moderation blip → don't block UX, ship original
+          }
+        }),
+      );
+      reasons = safeReasons;
     }
 
     // 7. Build cards
@@ -399,6 +444,70 @@ export class AiOrchestratorService {
         this.logger.debug(`persistSessionAsync failed (${args.sessionId}): ${(err as Error).message}`);
       }
     })();
+  }
+
+  /**
+   * Charge cost from a standalone (non-suggest) LLM call into the same
+   * per-user + org-wide spend counters used by suggest(). Audit AI-trace
+   * §C-1/§C-2: previously voice/fridge spend invisible to kill switch.
+   *
+   * Fire-and-forget; failures debug-only because the spend metric should
+   * never block a user-facing response.
+   */
+  async chargeStandaloneCall(userId: string, tracker: LlmCostTracker, label: string): Promise<void> {
+    if (!tracker || tracker.costUsd <= 0) return;
+    void (async () => {
+      try {
+        const day = new Date().toISOString().slice(0, 10);
+        const userDayKey = `ai:spend:${userId}:${day}`;
+        const orgDayKey = `ai:spend:org:${day}`;
+        const cents = Math.round(tracker.costUsd * 100_000); // 1e-5 USD precision
+        const pipe = this.redis.pipeline();
+        pipe.incrby(userDayKey, cents);
+        pipe.expire(userDayKey, 7 * 24 * 3600);
+        pipe.incrby(orgDayKey, cents);
+        pipe.expire(orgDayKey, 7 * 24 * 3600);
+        await pipe.exec();
+        this.analytics.track({
+          event: `ai:${label}:cost`,
+          userId,
+          properties: {
+            costUsd: Number(tracker.costUsd.toFixed(6)),
+            calls: tracker.calls,
+            promptTokens: tracker.promptTokens,
+            completionTokens: tracker.completionTokens,
+          },
+        });
+      } catch (err) {
+        this.logger.debug(`chargeStandaloneCall(${label}) failed: ${(err as Error).message}`);
+      }
+    })();
+  }
+
+  /**
+   * Org-wide concurrent LLM call cap (audit AI-trace §M-9). Returns false
+   * if the org-wide in-flight counter is at OPENAI_MAX_CONCURRENT. Caller
+   * MUST call `releaseConcurrencySlot` after the LLM call. Uses a Redis
+   * counter with auto-expiry so a process crash doesn't leak slots.
+   */
+  async acquireConcurrencySlot(): Promise<boolean> {
+    const cap = Number(process.env.OPENAI_MAX_CONCURRENT ?? '50');
+    if (!Number.isFinite(cap) || cap <= 0) return true;
+    const key = 'ai:concurrency:org';
+    const count = await this.redis.incr(key);
+    // 60s safety expiry — if a process dies mid-call, the slot frees itself
+    // within a minute rather than leaking forever.
+    if (count === 1) await this.redis.expire(key, 60);
+    if (count > cap) {
+      // Roll back immediately — we didn't actually get a slot.
+      await this.redis.decr(key).catch(() => null);
+      return false;
+    }
+    return true;
+  }
+
+  async releaseConcurrencySlot(): Promise<void> {
+    try { await this.redis.decr('ai:concurrency:org'); } catch {/* swallow */}
   }
 
   /**
