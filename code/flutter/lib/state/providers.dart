@@ -68,19 +68,23 @@ final accessTokenProvider = Provider<String?>((ref) {
 /// `Analytics.identify(userId)` whenever the auth state changes. Wire
 /// this into the root ProviderScope so the identify call happens once
 /// per session, not per screen.
-final analyticsProvider = Provider<Analytics>((ref) {
-  // Re-key the analytics user id whenever the user changes.
+/// Riverpod-friendly handle for the static `Analytics` SDK. The SDK is
+/// 100% static — this class is a pure ergonomic shim so widgets can do
+/// `ref.read(analyticsProvider).track(...)` instead of importing the
+/// static class directly.
+class AnalyticsHandle {
+  const AnalyticsHandle();
+  void track(String event, [Map<String, dynamic>? properties]) =>
+      Analytics.track(event, properties);
+  void screen(String name, {Map<String, dynamic>? properties}) =>
+      Analytics.screen(name, properties: properties);
+  void identify(String? userId) => Analytics.identify(userId);
+}
+
+final analyticsProvider = Provider<AnalyticsHandle>((ref) {
   ref.listen<AsyncValue<AuthUser?>>(currentUserProvider, (prev, next) {
     final id = next.valueOrNull?.id;
     Analytics.identify(id);
   });
-  return Analytics();
+  return const AnalyticsHandle();
 });
-
-/// Wraps Analytics as a class so the provider can return an instance —
-/// the class itself only forwards to the static helpers. Pure ergonomic
-/// shim so `ref.read(analyticsProvider).track(...)` reads naturally.
-extension AnalyticsRiverpodExt on Analytics {
-  void trackEvent(String event, [Map<String, dynamic>? properties]) =>
-      Analytics.track(event, properties);
-}

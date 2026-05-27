@@ -22,6 +22,7 @@ import 'nearby_restaurants_screen.dart';
 
 import '../api/hnag_api.dart';
 import '../api/auth_service.dart';
+import '../api/group_realtime.dart';
 import '../design/tokens.dart';
 import 'home_v2/home_v2.dart' as home_v2;
 import 'detail_v2/detail_v2.dart' as detail_v2;
@@ -105,6 +106,7 @@ class _TikTokReal extends StatefulWidget {
 class _TikTokRealState extends State<_TikTokReal> {
   final _api = HnagApi();
   List<social_v2.TikTokVideoData>? _videos;
+  String? _loadError;
 
   @override
   void initState() {
@@ -113,6 +115,7 @@ class _TikTokRealState extends State<_TikTokReal> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() => _loadError = null);
     // Prefer real posts so like/comment/save hit real `posts` rows. Fall back
     // to trending foods only when there are no posts yet (early-stage app).
     List<social_v2.TikTokVideoData> rows = [];
@@ -143,7 +146,13 @@ class _TikTokRealState extends State<_TikTokReal> {
       // No real posts → display trending foods as preview cards. Like still
       // works (post_likes has no FK in seed data), but comment will degrade
       // gracefully via the CommentsSheet's "post not yet" notice.
-      final trending = await _api.trendingFoods();
+      List<Map<String, dynamic>> trending = const [];
+      try {
+        trending = await _api.trendingFoods();
+      } catch (e) {
+        if (mounted) setState(() => _loadError = 'Không tải được nội dung — kiểm tra mạng');
+        return;
+      }
       rows = trending.take(8).map((f) => social_v2.TikTokVideoData(
         id: (f['id'] as String?) ?? '',
         author: (f['cuisine'] as String?) ?? 'hnag',
@@ -176,6 +185,29 @@ class _TikTokRealState extends State<_TikTokReal> {
 
   @override
   Widget build(BuildContext context) {
+    if (_loadError != null) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('📺', style: TextStyle(fontSize: 48)),
+              const SizedBox(height: 12),
+              Text(_loadError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white)),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh, color: Colors.white),
+                label: const Text('Thử lại', style: TextStyle(color: Colors.white)),
+                onPressed: _load,
+              ),
+            ]),
+          ),
+        ),
+      );
+    }
     if (_videos == null) {
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.white)));
     }
@@ -333,13 +365,18 @@ class _GroupVotingReal extends StatefulWidget {
 
 class _GroupVotingRealState extends State<_GroupVotingReal> {
   final _api = HnagApi();
-  io.Socket? _socket;
+  // Audit Flutter-trace §C-1: was a raw io.Socket bypassing GroupRealtime
+  // wrapper → no seq dedup, no replay, no app-layer heartbeat, no
+  // force_disconnect handling, no persisted lastSeq across cold-start.
+  // Now use the wrapper so all Tier-1 features land here.
+  final _rt = GroupRealtime();
   List<social_v2.GroupOption>? _options;
   List<int>? _tally;
   String? _groupId;
   String? _pollId;
   String _groupName = 'Đang tải…';
   String _userId = 'me';
+  String? _setupError;
 
   @override
   void initState() {
@@ -349,85 +386,92 @@ class _GroupVotingRealState extends State<_GroupVotingReal> {
 
   @override
   void dispose() {
-    _socket?.dispose();
+    _rt.dispose();
     super.dispose();
   }
 
   /// Real flow: ensure a group exists for the user (auto-create if first time),
   /// fetch trending foods as options, create a fresh poll, subscribe to the
   /// group's WS room for live tally updates from other voters.
+  ///
+  /// Audit Flutter-trace §C-6: previously silent on intermediate failure. If
+  /// `createPoll` failed after `createGroup` succeeded, user got an infinite
+  /// spinner with no error UI. Now each step throws → caught → setState
+  /// with `_setupError` → UI shows retry.
   Future<void> _bootstrap() async {
-    _userId = AuthService.instance.currentUser?.id ?? 'me';
+    try {
+      _userId = AuthService.instance.currentUser?.id ?? 'me';
 
-    var groups = await _api.myGroups();
-    Map<String, dynamic>? group;
-    if (groups.isEmpty) {
-      group = await _api.createGroup('Team lunch 🍜');
-    } else {
-      group = groups.first;
+      var groups = await _api.myGroups();
+      Map<String, dynamic>? group;
+      if (groups.isEmpty) {
+        group = await _api.createGroup('Team lunch 🍜');
+      } else {
+        group = groups.first;
+      }
+      if (group == null) throw Exception('Không tạo được nhóm — kiểm tra mạng');
+      if (!mounted) return;
+      _groupId = group['id'] as String?;
+      _groupName = (group['name'] as String?) ?? 'Team lunch';
+
+      final trending = await _api.trendingFoods();
+      if (!mounted) return;
+      if (trending.isEmpty) throw Exception('Không tải được món để vote');
+      final picks = trending.take(4).toList();
+      final foodIds = picks.map((f) => f['id'] as String).toList();
+
+      final poll = await _api.createPoll(_groupId!, foodIds, closesInMinutes: 30);
+      if (poll == null) throw Exception('Không tạo được poll');
+      _pollId = poll['id'] as String?;
+
+      final opts = picks.asMap().entries.map((e) {
+        final i = e.key;
+        final f = e.value;
+        final region = (f['region'] as String?) ?? (f['cuisine'] as String?) ?? 'Việt Nam';
+        return social_v2.GroupOption(
+          id: i.toString(),
+          name: (f['name_vi'] as String?) ?? '',
+          imageUrl: f['primary_image'] as String?,
+          foodSlug: 'pho',
+          priceVnd: _asInt(f['avg_price_vnd']) ?? 50000,
+          location: region,
+          voterAvatars: const [],
+        );
+      }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _options = opts;
+        _tally = List<int>.filled(opts.length, 0);
+        _setupError = null;
+      });
+
+      _connectRealtime();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _setupError = e.toString());
     }
-    if (group == null || !mounted) return;
-    _groupId = group['id'] as String?;
-    _groupName = (group['name'] as String?) ?? 'Team lunch';
-
-    // Trending foods → poll options
-    final trending = await _api.trendingFoods();
-    if (!mounted) return;
-    final picks = trending.take(4).toList();
-    final foodIds = picks.map((f) => f['id'] as String).toList();
-
-    final poll = await _api.createPoll(_groupId!, foodIds, closesInMinutes: 30);
-    _pollId = poll?['id'] as String?;
-
-    final opts = picks.asMap().entries.map((e) {
-      final i = e.key;
-      final f = e.value;
-      // Use the cuisine/region tag from the food itself rather than a hardcoded
-      // address — Q.3 was just a placeholder.
-      final region = (f['region'] as String?) ?? (f['cuisine'] as String?) ?? 'Việt Nam';
-      return social_v2.GroupOption(
-        id: i.toString(), // optionIdx is what backend expects on vote
-        name: (f['name_vi'] as String?) ?? '',
-        imageUrl: f['primary_image'] as String?,
-        foodSlug: 'pho',
-        priceVnd: _asInt(f['avg_price_vnd']) ?? 50000,
-        location: region,
-        voterAvatars: const [],
-      );
-    }).toList();
-
-    if (!mounted) return;
-    setState(() {
-      _options = opts;
-      _tally = List<int>.filled(opts.length, 0);
-    });
-
-    _connectSocket();
   }
 
-  void _connectSocket() {
-    final token = AuthService.instance.accessToken;
-    if (token == null || _groupId == null) return;
-    _socket = io.io(
-      'wss://api.tothanhthuy.cloud',
-      io.OptionBuilder()
-          .setTransports(['websocket'])
-          .disableAutoConnect()
-          .setAuth({'token': token})
-          .build(),
-    );
-    _socket!.onConnect((_) {
-      _socket!.emitWithAck('subscribe:group', {'groupId': _groupId}, ack: (resp) {
-        debugPrint('subscribe:group ack=$resp');
-      });
+  void _connectRealtime() {
+    if (_groupId == null) return;
+    _rt.pollUpdates.listen((u) {
+      if (!mounted) return;
+      if (u.pollId != _pollId) return;
+      setState(() => _tally = u.tally);
     });
-    _socket!.on('group.poll.updated', (data) {
-      if (!mounted || data is! Map) return;
-      if (data['pollId'] != _pollId) return;
-      final t = (data['tally'] as List?)?.cast<int>();
-      if (t != null) setState(() => _tally = t);
+    _rt.errors.listen((err) {
+      // Surface permanent-rejection errors (not_a_member etc) so the user
+      // isn't left wondering why votes aren't moving.
+      if (!mounted) return;
+      if (err.startsWith('force_disconnect') || err.contains('not_a_member')) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Realtime mất kết nối ($err) — kéo xuống refresh để cập nhật'),
+          duration: const Duration(seconds: 3),
+        ));
+      }
     });
-    _socket!.connect();
+    _rt.connect(_groupId!);
   }
 
   Future<void> _vote(String optionIdxStr) async {
@@ -440,6 +484,34 @@ class _GroupVotingRealState extends State<_GroupVotingReal> {
 
   @override
   Widget build(BuildContext context) {
+    if (_setupError != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Vote nhóm')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('😕', style: TextStyle(fontSize: 48)),
+              const SizedBox(height: 12),
+              Text(_setupError!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Thử lại'),
+                onPressed: () {
+                  setState(() {
+                    _setupError = null;
+                    _options = null;
+                    _tally = null;
+                  });
+                  _bootstrap();
+                },
+              ),
+            ]),
+          ),
+        ),
+      );
+    }
     if (_options == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: HnagColors.brand500)));
     }

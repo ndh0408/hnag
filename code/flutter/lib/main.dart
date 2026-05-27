@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -285,21 +287,49 @@ class _RootScreenState extends State<RootScreen> {
   //   Trang chủ · Khám phá · [center FAB AI Decide] · Feed · Tôi
   static const _tabKeys = ['home', 'explore', 'feed', 'me'];
   int _index = 0;
+  StreamSubscription<AuthUser?>? _authSub;
 
-  // Build each tab ONCE so state (scroll, fetched data, controllers) is
-  // preserved when the user switches tabs. IndexedStack keeps them all
-  // mounted but only shows the active one.
-  late final List<Widget> _pages;
+  // Audit Flutter-trace §C-2: prior `_pages = [Hifi.homeDemo(context), ...]`
+  // constructed all 4 tab widgets in initState, each firing its own
+  // `_load()` API call — 4 parallel calls on cold start even though the
+  // user only sees the home tab. Now we lazily construct each tab on its
+  // FIRST selection. Visited tabs stay in memory (so scroll position +
+  // fetched data persist across switches) but unvisited ones never run.
+  final Map<int, Widget> _builtTabs = {};
+
+  Widget _buildTab(int index) {
+    return _builtTabs.putIfAbsent(index, () {
+      switch (index) {
+        case 0: return Hifi.homeDemo(context);
+        case 1: return Hifi.searchDemo(context);
+        case 2: return Hifi.tiktokFeedDemo(context);
+        case 3: return Hifi.profileDemo(context);
+        default: return const SizedBox.shrink();
+      }
+    });
+  }
 
   @override
   void initState() {
     super.initState();
-    _pages = [
-      Hifi.homeDemo(context),
-      Hifi.searchDemo(context),
-      Hifi.tiktokFeedDemo(context),
-      Hifi.profileDemo(context),
-    ];
+    // Audit Flutter-trace §C-5: on sign-out, drop every cached tab so the
+    // next sign-in sees fresh data with the new user identity. Without
+    // this, the previous user's HomeReal/ProfileReal stayed visible
+    // because their _load() ran once in initState and never re-fired.
+    _authSub = AuthService.instance.userChanges.listen((u) {
+      if (u == null && _builtTabs.isNotEmpty && mounted) {
+        setState(() {
+          _builtTabs.clear();
+          _index = 0;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -308,7 +338,21 @@ class _RootScreenState extends State<RootScreen> {
       backgroundColor: const Color(0xFFFBFAF7),  // tokens neutral.25
       body: HnagDesign(
         tokens: SemanticTokens.light,
-        child: IndexedStack(index: _index, children: _pages),
+        // Build the four tab slots; only the tabs the user has visited
+        // are constructed. `Offstage` keeps visited tabs alive (scroll
+        // position + fetched data) while showing only the active one.
+        child: Stack(
+          children: List.generate(_tabKeys.length, (i) {
+            final visited = _builtTabs.containsKey(i) || i == _index;
+            return Offstage(
+              offstage: i != _index,
+              child: TickerMode(
+                enabled: i == _index,
+                child: visited ? _buildTab(i) : const SizedBox.shrink(),
+              ),
+            );
+          }),
+        ),
       ),
       bottomNavigationBar: HnagDesign(
         tokens: SemanticTokens.light,
