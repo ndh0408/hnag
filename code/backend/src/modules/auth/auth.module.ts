@@ -22,8 +22,9 @@ import { getJwtSecret } from '../../common/config/secrets';
     HttpModule.register({ timeout: 5000, maxRedirects: 2 }),
   ],
   controllers: [AuthController],
-  // Email-only auth: SmsService removed (phone OTP is no longer supported).
   providers: [AuthService, OtpService, EmailService, AppleTokenVerifier, JwtStrategy],
-  exports: [AuthService, OtpService, AppleTokenVerifier, JwtModule],
+  // EmailService is consumed by the BullMQ otp:email processor (QueuesModule)
+  // which imports AuthModule; export it so the DI container can wire it up.
+  exports: [AuthService, OtpService, EmailService, AppleTokenVerifier, JwtModule],
 })
 export class AuthModule {}
