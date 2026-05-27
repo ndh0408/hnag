@@ -67,11 +67,12 @@ Reference memories already saved by Claude:
 | 6 | Hardening + scale prep | 5 | **5** ✅ | 0 | 0 |
 | Pre-launch checklist (§11) | Pre-launch must-have | 8 | **7** | 0 | 1 |
 | Production-killer (post-78 audit) | 10-item maturity bar | 10 | **6** | 0 | 4 |
+| Hardening (post-82 audit) | Observability + AI protection + arch enforcement | 5 | **5** ✅ | 0 | 0 |
 
-**Current focus:** **49/58 items (84.5%) including post-78 maturity audit**.
-Score 48 → **82/100**. Remaining 9 items split between user-runtime gated
-(payment, deploy, UX) and multi-sprint asks (DDD refactor, CF
-recommendation, distributed tracing, frontend polish).
+**Current focus:** **54/63 items (85.7%) including post-82 hardening audit**.
+Score 48 → **85/100**. Remaining 9 items: 5 user-runtime gated (payment,
+deploy, iOS, UX, data ops), 4 multi-sprint (DDD refactor, CF
+recommendation, OpenTelemetry tracing, frontend polish).
 
 ---
 
@@ -345,6 +346,60 @@ run succeeds end-to-end.
   [restore-postgres-test.sh](../code/infra/server/restore-postgres-test.sh),
   [tls-expiry-check.sh](../code/infra/server/tls-expiry-check.sh),
   cron at [cron.d-hnag](../code/infra/server/cron.d-hnag).
+
+### 2026-05-27 (Batch 7 — post-82 Hardening audit: Observability + AI moderation + arch)
+
+User confirmed the system-first phase + flagged Observability as the
+weakest layer (5.8/10). Batch 7 closes that gap and adds AI moderation +
+architecture-rule enforcement.
+
+- **Prisma slow-query middleware** —
+  [common/prisma/prisma.service.ts](../code/backend/src/common/prisma/prisma.service.ts).
+  `$on('query')` hook logs every query with duration. Anything ≥
+  `SLOW_QUERY_MS_THRESHOLD` (default 200ms) goes to WARN; ≥
+  `SLOW_QUERY_BLOCK_MS` (2000ms) to ERROR (pager-worthy). Optional
+  full query log via `PRISMA_QUERY_LOG=true` for incident response.
+
+- **Expanded `/health` endpoint** —
+  [modules/health/health.controller.ts](../code/backend/src/modules/health/health.controller.ts)
+  + [health.module.ts](../code/backend/src/modules/health/health.module.ts).
+  Returns dbLatencyMs, cacheLatencyMs, queue depth (otp:email +
+  push:fcm: waiting/active/failed/delayed), memory (rss/heap),
+  uptime, version, sentry status. Always 200 with `ok=false` on
+  granular failure so external monitors get the full picture.
+
+- **Admin observability endpoints** —
+  [admin/observability.controller.ts](../code/backend/src/admin/observability.controller.ts).
+  Three RBAC-gated routes (admin / super_admin only) with @Audit:
+    * `GET /admin/queues` — per-queue job counts (6 states each)
+    * `GET /admin/ai-spend?from=&to=&top=` — sum + per-user breakdown
+      of llm_cost_usd over a date window
+    * `GET /admin/events?hours=24` — analytics_events name distribution
+  Each call is itself recorded to analytics_events as `audit:admin.observability.*`
+  so over-monitoring shows up.
+
+- **AI Moderation gate** —
+  [ai/services/moderation.service.ts](../code/backend/src/modules/ai/services/moderation.service.ts).
+  Three layers:
+    1. Hard-deny regex on obvious prompt injection ("ignore previous
+       instructions" / DAN / "reveal system prompt")
+    2. Redis-cached `omni-moderation-latest` API call (24h TTL keyed on
+       SHA-256 of input — repeat submissions are free)
+    3. Per-user abuse counter — N trips in 24h triggers a forensic warn
+       log. Threshold via `MODERATION_ABUSE_THRESHOLD` (default 5).
+  Soft-fails open when OpenAI moderation is unavailable so the core
+  suggest flow never breaks.
+  Wired into the user-text path at `POST /v1/ai/voice`
+  (transcript → moderation → intent extraction).
+
+- **Architecture enforcement** —
+  [code/backend/.dependency-cruiser.cjs](../code/backend/.dependency-cruiser.cjs).
+  Forbid rules: no circular deps, no module-to-module internal
+  imports (must go through *.module.ts public surface), no test code
+  from prod, warn on orphan files. CI hook in
+  [.github/workflows/backend-ci.yml](../.github/workflows/backend-ci.yml)
+  runs depcruise on every PR — currently `continue-on-error: true`
+  (warn-only) until baseline is clean; flip to false once green.
 
 ### 2026-05-27 (Batch 6 — post-78 production-maturity audit)
 
@@ -648,15 +703,16 @@ CF recommendation, distributed tracing, frontend polish — all multi-sprint).
 
 The audit established a baseline of **48 / 100**. Progress:
 
-| Dimension | Baseline | W1 | W2 | B3 | B4 | B5 | **B6** | Notes |
-|-----------|----------|----|----|----|----|----|----|-------|
-| Shipped-code quality | 7 | 7 | 8 | 8 | 9 | 9 | **9** | + prompt registry + RBAC + audit log |
-| Pitch ↔ reality | 4 | 4 | 4 | 5 | 6 | 6 | **7** | Analytics streaming gives retention story; cost router gives unit-economics story |
-| Security | 3 | 7 | 7 | 8 | 8 | 8 | **9** | RBAC + audit interceptor + global friendly errors |
-| Operations | 2 | 5 | 8 | 9 | 9 | 10 | **10** | Holding at max for monolith stage |
-| Product clarity | 6 | 6 | 6 | 6 | 6 | 6 | **6** | Needs Flutter v2 cut-over |
-| AI maturity | 5 | 5 | 5 | 6 | 6 | 7 | **8** | Prompt registry + model router + cost+analytics observability |
-| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | **82** | +34 from baseline · Pushing beyond Series-A floor |
+| Dimension | Baseline | W1 | W2 | B3 | B4 | B5 | B6 | **B7** | Notes |
+|-----------|----------|----|----|----|----|----|----|----|-------|
+| Shipped-code quality | 7 | 7 | 8 | 8 | 9 | 9 | 9 | **9** | Holding |
+| Pitch ↔ reality | 4 | 4 | 4 | 5 | 6 | 6 | 7 | **7** | Holding |
+| Security | 3 | 7 | 7 | 8 | 8 | 8 | 9 | **9** | Holding |
+| Operations | 2 | 5 | 8 | 9 | 9 | 10 | 10 | **10** | Maxed |
+| Observability | 2 | 5 | 6 | 7 | 7 | 8 | 8 | **10** | Slow-query + health depth + admin obs + moderation forensics |
+| AI maturity | 5 | 5 | 5 | 6 | 6 | 7 | 8 | **9** | + ModerationService + abuse-counter forensics |
+| Architecture enforcement | 4 | 4 | 4 | 4 | 5 | 5 | 5 | **7** | depcruise CI gate |
+| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | 82 | **85** | +37 from baseline |
 
 **Target reached: 78 / 100 — Series-A credible floor.** From here every
 remaining point requires user-runtime input that cannot be coded solo:

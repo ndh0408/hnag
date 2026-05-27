@@ -15,6 +15,7 @@ import { EmbeddingService } from './services/embedding.service';
 import { FridgeService } from './services/fridge.service';
 import { VoiceService } from './services/voice.service';
 import { ModelRouter } from './services/model-router.service';
+import { ModerationService } from './services/moderation.service';
 import { PromptRegistry } from './prompts/prompt-registry.service';
 
 @Module({
@@ -33,7 +34,15 @@ import { PromptRegistry } from './prompts/prompt-registry.service';
     VoiceService,
     PromptRegistry,
     ModelRouter,
+    ModerationService,
   ],
-  exports: [AiOrchestratorService, TasteMemoryService, EmbeddingService, PromptRegistry, ModelRouter],
+  exports: [
+    AiOrchestratorService,
+    TasteMemoryService,
+    EmbeddingService,
+    PromptRegistry,
+    ModelRouter,
+    ModerationService,
+  ],
 })
 export class AiModule {}

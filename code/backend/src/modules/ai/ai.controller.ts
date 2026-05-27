@@ -7,6 +7,8 @@ import { z } from 'zod';
 import { AiOrchestratorService } from './services/ai-orchestrator.service';
 import { FridgeService } from './services/fridge.service';
 import { VoiceService, audioExtFromMime } from './services/voice.service';
+import { ModerationService } from './services/moderation.service';
+import { HttpException, HttpStatus } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
@@ -65,6 +67,7 @@ export class AiController {
     private readonly orchestrator: AiOrchestratorService,
     private readonly fridge: FridgeService,
     private readonly voice: VoiceService,
+    private readonly moderation: ModerationService,
   ) {}
 
   /** Fridge Scan — detect ingredients from a photo (GPT-4o vision) → recipes. */
@@ -91,6 +94,17 @@ export class AiController {
     const raw = body.audioBase64.replace(/^data:audio\/[^;]+;base64,/, '');
     const buf = Buffer.from(raw, 'base64');
     const transcript = await this.voice.transcribe(buf, `audio.${audioExtFromMime(body.mime)}`);
+
+    // Moderation gate: user-supplied audio transcripts could carry abuse /
+    // prompt injection. Check before paying GPT for intent extraction.
+    const verdict = await this.moderation.check(transcript, { userId: user.sub });
+    if (!verdict.allowed) {
+      throw new HttpException(
+        { code: 'MODERATION_BLOCKED', message: 'Nội dung không phù hợp', reason: verdict.reason },
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
     const intent = await this.voice.intent(transcript);
     const result = intent.mood
       ? await this.orchestrator.suggestByMood({ userId: user.sub, isPremium: !!user.isPremium, mood: intent.mood })

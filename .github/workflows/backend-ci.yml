@@ -33,6 +33,13 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run lint --if-present
       - run: npx tsc --noEmit
+      # Architecture-enforcement gate (B7): blocks cross-module internal
+      # imports + circular deps. depcruise exits non-zero on rule
+      # violation so the job fails on first offence.
+      - name: Architecture rules (dependency-cruiser)
+        run: |
+          npx --yes dependency-cruiser@16 src --config .dependency-cruiser.cjs --output-type err-long
+        continue-on-error: true  # Warn-only for the first week — flip to false after baseline is clean
 
   test:
     runs-on: ubuntu-latest
