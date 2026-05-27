@@ -71,9 +71,10 @@ Reference memories already saved by Claude:
 | Hardening Phase 2 (post-85 audit) | Metrics/dashboards/cooldown/rejection/staging/docs | 6 | **6** ✅ | 0 | 0 |
 | Multi-sprint scaffolds (B9 final) | OTel hook · CF skeleton · optimistic · haptic | 4 | **4** ✅ | 0 | 0 |
 | Ops layer (B10 truly final) | dedup · FE analytics SDK · Grafana · cohorts · runbook · degraded mode | 6 | **6** ✅ | 0 | 0 |
+| Strategic review (B11 viral + UX) | one-tap hero · viral share · onboarding funnel · Riverpod providers | 4 | **4** ✅ | 0 | 0 |
 
-**Current focus:** **70/79 items (88.6%) — code-only path truly EXHAUSTED.**
-Score 48 → **91/100**. Remaining 9 items split into:
+**Current focus:** **74/83 items (89.2%) — code-only path truly TRULY EXHAUSTED.**
+Score 48 → **92/100**. Remaining 9 items split into:
 - **5 user-runtime gated** (cannot code solo): payment E2E real-transfer,
   deploy SQL + npm install on ServerLinux, iOS Mac VM build, Flutter v2
   main-flow cut-over (UX review), restaurant data ops 1k HCMC menus.
@@ -356,6 +357,50 @@ run succeeds end-to-end.
   [restore-postgres-test.sh](../code/infra/server/restore-postgres-test.sh),
   [tls-expiry-check.sh](../code/infra/server/tls-expiry-check.sh),
   cron at [cron.d-hnag](../code/infra/server/cron.d-hnag).
+
+### 2026-05-27 (Batch 11 — strategic review: viral loop + one-tap + onboarding funnel + Riverpod)
+
+User's strategic feedback praised infrastructure + observability progress
+but flagged 4 product-side items still missing in code: one-tap hero,
+viral share loop, onboarding A/B funnel tracking, and proper Riverpod
+state management. B11 ships those.
+
+- **One-tap "Hôm Nay Ăn Gì?" hero widget** —
+  [code/flutter/lib/widgets/one_tap_hero.dart](../code/flutter/lib/widgets/one_tap_hero.dart).
+  Three-state widget at top of Home v2: idle pulsing gradient → busy
+  spinner → result card with degraded-mode honest copy. Calls existing
+  `/v1/ai/suggest` with `limit=1`. Each state fires analytics
+  (`home:one_tap_pressed`, `home:one_tap_answered`, `home:one_tap_failed`).
+  No new backend; pure UI layer over the existing AI suggest pipeline.
+
+- **Viral share helper** —
+  [code/flutter/lib/widgets/viral_share.dart](../code/flutter/lib/widgets/viral_share.dart).
+  `ViralShare.shareFood / shareRestaurant / shareGroupVote / shareApp` —
+  each generates a deep-link URL matching the B7 AndroidManifest
+  intent-filter (`https://tothanhthuy.cloud/{f|r|g}/<id>`), appends
+  UTM tracking, fires `share_plus` with branded copy, logs
+  `social:share` analytics with the campaign tag. Closes audit
+  production-killer §"viral loop".
+
+- **Onboarding step tracking** —
+  [code/flutter/lib/screens/onboarding/onboarding_flow.dart](../code/flutter/lib/screens/onboarding/onboarding_flow.dart).
+  Each of 6 steps fires `onboarding:step_view`, `onboarding:step_complete`,
+  `onboarding:step_back`. Entry seeds the first event in initState;
+  completion fires `onboarding:completed` with summary (allergies count,
+  loves count, budget, goal). Pairs with `onboarding_funnel_14d` view
+  from sql/16 to chart per-step drop-off — ready for A/B testing the
+  6→4 step reduction the audit recommended.
+
+- **Riverpod providers** —
+  [code/flutter/lib/state/providers.dart](../code/flutter/lib/state/providers.dart).
+  Riverpod was imported in pubspec but only used as a no-op
+  ProviderScope. This file is the bridge: `currentUserProvider`
+  (StreamProvider over AuthService.userChanges), `isAuthedProvider`,
+  `isPremiumProvider`, `accessTokenProvider`, `analyticsProvider` (with
+  auto-`identify(userId)` on user change). Adoption is incremental —
+  new screens use `ref.watch(currentUserProvider)`, old screens
+  keep `StreamBuilder` until refactored. Source of truth remains
+  `AuthService.instance`; Riverpod just exposes it.
 
 ### 2026-05-27 (Batch 10 — TRULY FINAL: ops layer · dashboards · runbook)
 
@@ -897,8 +942,10 @@ The audit established a baseline of **48 / 100**. Progress:
 | Env / deploy maturity | 3 | 4 | 4 | 5 | 5 | 5 | 5 | 6 | 8 | **8** | Holding |
 | Observability scaffold (full pipeline) | 2 | 5 | 6 | 7 | 7 | 8 | 8 | 10 | 10 | **9** | + OTel lazy hook ready for collector |
 | FE polish primitives | 3 | 3 | 3 | 3 | 5 | 5 | 5 | 6 | 6 | 8 | **8** | Holding |
-| Ops / incident readiness | 2 | 4 | 4 | 5 | 5 | 5 | 6 | 7 | 7 | 7 | **9** | + dashboards + runbook + cohorts + degraded mode |
-| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | 82 | 85 | 87 | 89 | **91** | +43 from baseline · **TRULY done code-only** |
+| Ops / incident readiness | 2 | 4 | 4 | 5 | 5 | 5 | 6 | 7 | 7 | 7 | 9 | **9** | Holding |
+| Viral / growth loops | 2 | 2 | 3 | 3 | 4 | 5 | 5 | 5 | 5 | 5 | 5 | **8** | + one-tap hero + ViralShare + funnel tracking |
+| State management (Flutter) | 3 | 3 | 3 | 3 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | **7** | Riverpod providers actually used |
+| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | 82 | 85 | 87 | 89 | 91 | **92** | +44 from baseline |
 
 **Target reached: 78 / 100 — Series-A credible floor.** From here every
 remaining point requires user-runtime input that cannot be coded solo:

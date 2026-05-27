@@ -18,7 +18,20 @@ import '../../design/tokens.dart';
 import '../../design/gradients.dart';
 import '../../design/food_gradients.dart';
 import '../../design/theme.dart';
+import '../../observability/analytics.dart';
 import '../../widgets/ds/ds.dart';
+
+// Step names for the funnel — kept short + stable so dashboards built
+// on `analytics_events` (sql/16_cohort_views.sql:onboarding_funnel_14d)
+// don't break when copy changes. Update sql/16 if you re-order.
+const List<String> _stepNames = [
+  'diet_allergy',  // 0
+  'taste_quiz',    // 1
+  'hate_foods',    // 2
+  'budget_goal',   // 3
+  'dna_reveal',    // 4
+  'onboard_chat',  // 5
+];
 
 class OnboardingFlow extends StatefulWidget {
   final Future<void> Function(Map<String, dynamic> dna) onComplete;
@@ -54,19 +67,51 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     _ => false,
   };
 
+  @override
+  void initState() {
+    super.initState();
+    // Fire the entry event for step 0 — every subsequent step fires in _next().
+    Analytics.track('onboarding:step_view', {
+      'step': 0,
+      'step_name': _stepNames[0],
+      'total_steps': _totalSteps,
+    });
+  }
+
   void _next() {
     if (_idx >= _totalSteps - 1) return;
+    final fromStep = _idx;
     setState(() => _idx++);
     _ctrl.animateToPage(_idx, duration: HnagMotion.base, curve: HnagMotion.out);
+    // Audit production-killer §"onboarding A/B": each step exit + the
+    // next step entry are separate events so we can chart drop-off
+    // between step N and step N+1 in onboarding_funnel_14d view.
+    Analytics.track('onboarding:step_complete', {
+      'step': fromStep,
+      'step_name': _stepNames[fromStep],
+    });
+    Analytics.track('onboarding:step_view', {
+      'step': _idx,
+      'step_name': _stepNames[_idx],
+      'total_steps': _totalSteps,
+    });
   }
 
   void _back() {
     if (_idx == 0) {
+      Analytics.track('onboarding:abandoned', {'step': _idx, 'step_name': _stepNames[_idx]});
       Navigator.maybePop(context);
       return;
     }
+    final fromStep = _idx;
     setState(() => _idx--);
     _ctrl.animateToPage(_idx, duration: HnagMotion.base, curve: HnagMotion.out);
+    Analytics.track('onboarding:step_back', {
+      'from_step': fromStep,
+      'from_name': _stepNames[fromStep],
+      'to_step': _idx,
+      'to_name': _stepNames[_idx],
+    });
   }
 
   Future<void> _finish() async {
@@ -80,6 +125,17 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       'loves': _loves.toList(),
       'hates': _hates.toList(),
     };
+    // Funnel completion event — pairs with retention_cohorts to compute
+    // "% of signups who finish onboarding" and downstream D1/D7/D30.
+    Analytics.track('onboarding:completed', {
+      'diet': _diet,
+      'allergies_count': _allergies.length,
+      'loves_count': _loves.length,
+      'hates_count': _hates.length,
+      'budget_vnd': (_budget * 1000).round(),
+      'cook_freq': _cookFreq,
+      'health_goal': _goal,
+    });
     try {
       await widget.onComplete(dna);
     } finally {
