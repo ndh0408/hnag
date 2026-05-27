@@ -29,6 +29,36 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- Custom-scheme deep links: hnag://r/<id>, hnag://f/<id>, hnag://c/<id> -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="hnag"/>
+            </intent-filter>
+
+            <!--
+              App Links (Android equivalent of iOS Universal Links) for
+              https://tothanhthuy.cloud/r/<id>, /f/<id>, /c/<id>. `autoVerify`
+              tells Android to fetch assetlinks.json on install to confirm
+              we own the domain; once verified, links open straight in the
+              app without the chooser dialog.
+
+              Server-side: deploy the assetlinks.json that ships in
+              code/web-marketing/public/.well-known/assetlinks.json
+              (see docs/99-PRODUCTION-READINESS.md §6).
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"/>
+                <data android:host="tothanhthuy.cloud"/>
+                <data android:pathPrefix="/r/"/>
+                <data android:pathPrefix="/f/"/>
+                <data android:pathPrefix="/c/"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

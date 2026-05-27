@@ -1,10 +1,11 @@
-import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Inject, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, createHash } from 'crypto';
 import IORedis from 'ioredis';
 
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { REDIS } from '../../common/redis/redis.module';
+import { AppleTokenVerifier } from './apple-token-verifier.service';
 
 interface DeviceInfo {
   deviceId: string;
@@ -17,10 +18,17 @@ interface DeviceInfo {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  // iOS bundle id used as the expected `aud` claim on Apple identityTokens.
+  // Falls back to the real bundle (memory hnag-static-file-hosting: vn.hnag.hnag).
+  // Override per environment via APPLE_BUNDLE_ID if you ship multiple variants.
+  private readonly appleAudience = process.env.APPLE_BUNDLE_ID || 'vn.hnag.hnag';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     @Inject(REDIS) private readonly redis: IORedis,
+    private readonly appleVerifier: AppleTokenVerifier,
   ) {}
 
   async signInWithEmail(email: string, device?: DeviceInfo) {
@@ -70,30 +78,30 @@ export class AuthService {
   }
 
   /**
-   * Apple SSO. Validates identityToken signature against Apple's public
-   * keys, extracts `sub` + `email`, upserts user, returns session tokens.
+   * Apple SSO. Cryptographically verifies the identityToken signature against
+   * Apple's published JWKS before trusting any claim, then upserts the user
+   * and returns session tokens.
+   *
+   * Audit hnag-audit-2026-05 / 2026-05-27: prior implementation only decoded
+   * the payload and trusted `sub` over HTTPS — an attacker could forge a
+   * token with any `sub` and silently impersonate any Apple-linked user.
    */
   async signInWithApple(payload: { identityToken: string; authorizationCode?: string; fullName?: string; email?: string; device?: DeviceInfo }) {
-    // Lightweight JWT decode (header.payload.signature). For production, use
-    // `apple-signin-auth` to verify against https://appleid.apple.com/auth/keys.
-    // Here we trust the token's payload over HTTPS from the verified client;
-    // tighten in next iteration with proper public-key verification.
-    const parts = payload.identityToken.split('.');
-    if (parts.length !== 3) throw new UnauthorizedException('Bad identity token');
-    let claims: Record<string, unknown>;
-    try {
-      claims = JSON.parse(Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString());
-    } catch {
-      throw new UnauthorizedException('Bad identity token');
-    }
-    const sub = claims['sub'] as string | undefined;
-    const email = (payload.email ?? (claims['email'] as string | undefined))?.toLowerCase();
-    if (!sub) throw new UnauthorizedException('No subject in identity token');
+    const claims = await this.appleVerifier.verify(payload.identityToken, this.appleAudience);
+
+    const sub = claims.sub;
+    // Prefer the email proven by Apple inside the verified token over whatever
+    // the client claims in the request body — clients can lie, JWT claims can't
+    // (now that the signature is checked).
+    const verifiedEmail = typeof claims.email === 'string' ? claims.email.toLowerCase() : undefined;
+    const clientClaimedEmail = payload.email?.toLowerCase();
+    const email = verifiedEmail ?? clientClaimedEmail;
 
     // Apple's `sub` is the stable subject. Schema doesn't yet have an
     // apple_sub column, so we map Apple users to a synthetic email of
     // shape `apple+{sub}@hnag.internal` when no real email is shared. If
-    // Apple did share a real email, use that.
+    // Apple did share a real email, use that. (Migration to a dedicated
+    // apple_sub column is tracked separately.)
     const keyEmail = email ?? `apple+${sub}@hnag.internal`;
     const user = await this.prisma.users.upsert({
       where: { email: keyEmail },

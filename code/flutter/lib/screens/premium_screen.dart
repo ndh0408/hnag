@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../theme/app_theme.dart';
 import '../api/hnag_api.dart';
 
@@ -104,8 +105,14 @@ class _PremiumScreenState extends State<PremiumScreen> {
     showDialog(context: context, builder: (c) => AlertDialog(
       title: const Text('Quét mã chuyển khoản'),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
-        if (r['qrUrl'] != null) Image.network(r['qrUrl'] as String, height: 240,
-            errorBuilder: (_, __, ___) => const Text('Không tải được mã QR')),
+        if (r['qrUrl'] != null)
+          CachedNetworkImage(
+            imageUrl: r['qrUrl'] as String,
+            height: 240,
+            fit: BoxFit.contain,
+            placeholder: (_, __) => const SizedBox(height: 240, child: Center(child: CircularProgressIndicator())),
+            errorWidget: (_, __, ___) => const Text('Không tải được mã QR'),
+          ),
         const SizedBox(height: 8),
         Text('Số tiền: ${_fmt(r['amountVnd'])}₫', style: AppTypography.bodyLg),
         Text('Nội dung: ${r['memo']}', style: AppTypography.caption),

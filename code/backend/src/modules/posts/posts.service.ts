@@ -1,29 +1,43 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+
+import { CreatePostDto, CreateStoryDto } from './dto/posts.dto';
 
 @Injectable()
 export class PostsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(userId: string, dto: {
-    type: 'photo' | 'video' | 'review' | 'story';
-    caption?: string;
-    mediaUrl: string;
-    mediaPoster?: string;
-    foodId?: string;
-    restaurantId?: string;
-    tags?: string[];
-  }) {
+  /**
+   * Create a new post.
+   *
+   * The DTO is the explicit allowlist of writable fields (audit #12);
+   * server-derived columns (counts, type, archive flag, timestamps) are
+   * never taken from the client.
+   */
+  async create(userId: string, dto: CreatePostDto) {
+    const images = (dto.images ?? []).filter(Boolean);
+    const mediaUrl = dto.mediaUrl ?? images[0];
+    if (!mediaUrl && !dto.caption) {
+      throw new BadRequestException('Bài đăng cần ít nhất 1 ảnh hoặc caption');
+    }
+    // Cheap mime-style inference so the DB still carries a `type` value.
+    // Clients no longer pick this — preventing them from forging e.g. an
+    // "admin" or "system" type.
+    const ext = (mediaUrl ?? '').toLowerCase().split('?')[0].split('.').pop() ?? '';
+    const type: 'photo' | 'video' | 'text' = ['mp4', 'mov', 'm3u8', 'webm'].includes(ext)
+      ? 'video'
+      : mediaUrl
+        ? 'photo'
+        : 'text';
     return this.prisma.posts.create({
       data: {
         user_id: userId,
-        type: dto.type,
+        type,
         caption: dto.caption,
-        media_url: dto.mediaUrl,
-        media_poster: dto.mediaPoster,
+        media_url: mediaUrl,
         food_id: dto.foodId,
         restaurant_id: dto.restaurantId,
-        tags: dto.tags ?? [],
+        tags: images.length > 1 ? images.slice(1) : [],
       },
     });
   }
@@ -64,13 +78,20 @@ export class PostsService {
   }
 
   async like(userId: string, postId: string) {
-    try {
-      await this.prisma.post_likes.create({
-        data: { user_id: userId, post_id: postId },
+    // Audit hnag-audit-2026-05 #13 (race): two parallel like requests used to
+    // both succeed-via-catch and BOTH increment like_count even though only
+    // one post_likes row existed, drifting the counter. Fix: createMany with
+    // skipDuplicates returns 0 when the like already exists, so we only
+    // increment on a fresh create.
+    const created = await this.prisma.post_likes.createMany({
+      data: [{ user_id: userId, post_id: postId }],
+      skipDuplicates: true,
+    });
+    if (created.count > 0) {
+      await this.prisma.posts.update({
+        where: { id: postId },
+        data: { like_count: { increment: 1 } },
       });
-      await this.prisma.posts.update({ where: { id: postId }, data: { like_count: { increment: 1 } } });
-    } catch {
-      // already liked — ignore
     }
     return { liked: true };
   }
@@ -117,13 +138,18 @@ export class PostsService {
   }
 
   // Stories
-  async createStory(userId: string, dto: { type: string; mediaUrl: string; data?: any; restaurantId?: string }) {
+  async createStory(userId: string, dto: CreateStoryDto) {
+    if (!dto.mediaUrl && !dto.caption) {
+      throw new BadRequestException('Story cần ít nhất 1 ảnh hoặc caption');
+    }
+    const ext = (dto.mediaUrl ?? '').toLowerCase().split('?')[0].split('.').pop() ?? '';
+    const type: 'photo' | 'video' = ['mp4', 'mov', 'm3u8', 'webm'].includes(ext) ? 'video' : 'photo';
     return this.prisma.stories.create({
       data: {
         user_id: userId,
-        media_url: dto.mediaUrl,
-        type: dto.type,
-        data: dto.data ?? {},
+        media_url: dto.mediaUrl ?? '',
+        type,
+        data: dto.caption ? ({ caption: dto.caption } as any) : ({} as any),
         restaurant_id: dto.restaurantId,
       },
     });

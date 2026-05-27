@@ -1,0 +1,47 @@
+# /etc/cron.d/hnag — HNAG production maintenance cron table
+# -----------------------------------------------------------------------------
+# Install:
+#   sudo cp code/infra/server/cron.d-hnag /etc/cron.d/hnag
+#   sudo chmod 644 /etc/cron.d/hnag
+#   sudo systemctl restart cron
+#
+# Required setup before enabling:
+#   1. Place all three scripts at /opt/hnag/:
+#        sudo install -m 0755 backup-postgres.sh         /opt/hnag/backup-postgres.sh
+#        sudo install -m 0755 restore-postgres-test.sh   /opt/hnag/restore-postgres-test.sh
+#        sudo install -m 0755 tls-expiry-check.sh        /opt/hnag/tls-expiry-check.sh
+#   2. Drop secrets in /opt/hnag/backup.env (chmod 600 root:root):
+#        RCLONE_REMOTE=b2:hnag-backups-prod
+#        POSTGRES_USER=hnag
+#        POSTGRES_DB=hnag
+#        BACKUP_AGE_RECIPIENT=age1...        # optional encryption
+#        HEALTHCHECK_URL=https://hc-ping.com/<uuid>
+#        ALERT_WEBHOOK_URL=https://hooks.slack.com/...
+#   3. Configure rclone once: sudo -u root rclone config (set up "b2" remote).
+# -----------------------------------------------------------------------------
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+
+# Postgres backups ───────────────────────────────────────────────────────────
+# Daily at 03:00 UTC (≈10:00 ICT — after the overnight-quiet window)
+0  3 * * *   root   /opt/hnag/backup-postgres.sh daily   >>/var/log/hnag-backup.log 2>&1
+
+# Weekly snapshot every Sunday at 04:00 UTC
+0  4 * * 0   root   /opt/hnag/backup-postgres.sh weekly  >>/var/log/hnag-backup.log 2>&1
+
+# Monthly snapshot on the 1st at 05:00 UTC
+0  5 1 * *   root   /opt/hnag/backup-postgres.sh monthly >>/var/log/hnag-backup.log 2>&1
+
+# Restore drill — proves we can come back from disaster.
+# Runs on the 2nd of every month at 06:00 UTC against the latest daily.
+0  6 2 * *   root   /opt/hnag/restore-postgres-test.sh   >>/var/log/hnag-restore-drill.log 2>&1
+
+# TLS expiry monitor ─────────────────────────────────────────────────────────
+# Runs every morning at 07:00 UTC. Alerts if any public hostname's cert has
+# ≤14 days left (Cloudflare normally renews automatically; this is the
+# trip-wire for silent renewal failures).
+0  7 * * *   root   /opt/hnag/tls-expiry-check.sh        >>/var/log/hnag-tls.log 2>&1
+
+# Log rotation — keep cron log files trim
+# (logrotate config installed separately; this stub avoids surprises if it isn't)

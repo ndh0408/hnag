@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PostsService } from './posts.service';
+import { CreateCommentDto, CreatePostDto, CreateStoryDto } from './dto/posts.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 
@@ -22,43 +23,47 @@ export class PostsController {
 
   @ApiBearerAuth() @UseGuards(AuthGuard('jwt'))
   @Post('posts')
-  create(@CurrentUser() u: JwtPayload, @Body() body: any) {
-    return this.svc.create(u.sub, body);
+  create(@CurrentUser() u: JwtPayload, @Body() dto: CreatePostDto) {
+    return this.svc.create(u.sub, dto);
   }
 
   @Get('posts/:id')
-  detail(@Param('id') id: string) {
+  detail(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.svc.detail(id);
   }
 
   @ApiBearerAuth() @UseGuards(AuthGuard('jwt'))
   @Post('posts/:id/like')
-  like(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
+  like(@CurrentUser() u: JwtPayload, @Param('id', new ParseUUIDPipe()) id: string) {
     return this.svc.like(u.sub, id);
   }
 
   @ApiBearerAuth() @UseGuards(AuthGuard('jwt'))
   @Delete('posts/:id/like')
-  unlike(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
+  unlike(@CurrentUser() u: JwtPayload, @Param('id', new ParseUUIDPipe()) id: string) {
     return this.svc.unlike(u.sub, id);
   }
 
   @ApiBearerAuth() @UseGuards(AuthGuard('jwt'))
   @Post('posts/:id/comment')
-  comment(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Body() body: { content: string; parentId?: string }) {
-    return this.svc.comment(u.sub, id, body.content, body.parentId);
+  comment(
+    @CurrentUser() u: JwtPayload,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: CreateCommentDto,
+  ) {
+    return this.svc.comment(u.sub, id, dto.content, dto.parentId);
   }
 
   @Get('posts/:id/comments')
-  comments(@Param('id') id: string, @Query('page') page?: string) {
+  comments(@Param('id', new ParseUUIDPipe()) id: string, @Query('page') page?: string) {
     return this.svc.listComments(id, page ? parseInt(page) : 1);
   }
 
   // Stories
   @ApiBearerAuth() @UseGuards(AuthGuard('jwt'))
   @Post('stories')
-  createStory(@CurrentUser() u: JwtPayload, @Body() body: any) {
-    return this.svc.createStory(u.sub, body);
+  createStory(@CurrentUser() u: JwtPayload, @Body() dto: CreateStoryDto) {
+    return this.svc.createStory(u.sub, dto);
   }
 
   @ApiBearerAuth() @UseGuards(AuthGuard('jwt'))

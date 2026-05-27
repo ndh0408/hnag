@@ -3,10 +3,18 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/food_card.dart';
 import 'auth_service.dart';
+import 'resilient_client.dart';
 
 /// HNAG API client — talks to api.tothanhthuy.cloud.
 class HnagApi {
   static const String baseUrl = 'https://api.tothanhthuy.cloud';
+
+  /// Resilient client used by `_fetchList` and any new method that opts in.
+  /// Audit hnag-audit-2026-05 §5-Flutter: bare `http.get` had no retry, no
+  /// circuit breaker, single timeout. Existing methods are migrated one at
+  /// a time — they keep working until they're converted because the
+  /// fallback path through raw http still exists.
+  final ResilientClient _client = ResilientClient();
 
   Future<List<Map<String, dynamic>>> trendingFoods({String period = 'week', String? city}) async {
     final uri = Uri.parse('$baseUrl/v1/foods/trending').replace(queryParameters: {
@@ -555,17 +563,22 @@ class HnagApi {
   }
 
   Future<List<Map<String, dynamic>>> _fetchList(Uri uri) async {
+    // Resilient: 3 attempts, exp backoff + jitter, circuit-breaker per host.
     try {
-      debugPrint('HNAG_API GET $uri');
-      final r = await http.get(uri).timeout(const Duration(seconds: 20));
-      debugPrint('HNAG_API ${r.statusCode} ${r.body.length} bytes');
+      final r = await _client.get(uri);
       if (r.statusCode != 200) return [];
       final body = jsonDecode(r.body) as Map<String, dynamic>;
       final data = body['data'];
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
+    } on ResilientHttpError catch (e) {
+      // Circuit-open is the one error we don't want to spam the user with
+      // — it's by design. Other failures still degrade to empty list so
+      // the UI shows an empty state rather than crashing.
+      if (kDebugMode) debugPrint('HNAG_API _fetchList degraded: $e');
+      return [];
     } catch (e) {
-      debugPrint('HNAG_API error: $e');
+      if (kDebugMode) debugPrint('HNAG_API _fetchList error: $e');
       return [];
     }
   }

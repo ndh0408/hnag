@@ -94,22 +94,47 @@ export class ChallengesService {
   // ─── Leaderboard ─────────────────────────────────────────────────────────
 
   async leaderboard(scope: 'global' | 'weekly' | 'monthly' = 'weekly', city?: string) {
-    const since = new Date();
-    if (scope === 'weekly')  since.setDate(since.getDate() - 7);
-    if (scope === 'monthly') since.setMonth(since.getMonth() - 1);
-    if (scope === 'global')  since.setFullYear(2020);
+    // Audit hnag-audit-2026-05 §11 (HIGH): live aggregation used to scan the
+    // entire users × reviews join on every page view (2-5s). The weekly /
+    // monthly results are now precomputed in materialized views
+    // `leaderboard_weekly` / `leaderboard_monthly`, refreshed every 5 min
+    // by `LeaderboardRefreshCron` (or pg_cron). Reads are now sub-ms.
+    //
+    // Global still falls through to the live aggregate — it's intentionally
+    // unbounded in time and ranking-by-XP is already fast enough.
+    if (scope === 'weekly' || scope === 'monthly') {
+      const view = scope === 'weekly' ? 'leaderboard_weekly' : 'leaderboard_monthly';
+      const params: unknown[] = [];
+      let where = '';
+      if (city) {
+        where = 'WHERE city = $1';
+        params.push(city);
+      }
+      // Parameterised; the table name is a server-side literal (no user input).
+      return this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT id, username, display_name, avatar_url, foodie_class, xp,
+                reviews_count, avg_rating AS rating_avg
+         FROM ${view}
+         ${where}
+         ORDER BY reviews_count DESC, xp DESC
+         LIMIT 100`,
+        ...params,
+      );
+    }
 
-    return this.prisma.$queryRawUnsafe<any[]>(`
-      SELECT u.id, u.username, u.display_name, u.avatar_url, u.foodie_class, u.level,
-             COUNT(r.id) AS reviews_count, COALESCE(AVG(r.rating), 0)::numeric(3,2) AS rating_avg
-      FROM users u
-      LEFT JOIN reviews r ON r.user_id = u.id AND r.created_at >= $1
-      WHERE u.status = 'active' ${city ? 'AND u.city = $2' : ''}
-      GROUP BY u.id
-      HAVING COUNT(r.id) > 0
-      ORDER BY reviews_count DESC, u.xp DESC
-      LIMIT 100;
-    `, since, ...(city ? [city] : []));
+    // Global — kept live until the dataset size forces another MV.
+    return this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT u.id, u.username, u.display_name, u.avatar_url, u.foodie_class, u.xp,
+              COUNT(r.id) AS reviews_count, COALESCE(AVG(r.rating), 0)::numeric(3,2) AS rating_avg
+       FROM users u
+       LEFT JOIN reviews r ON r.user_id = u.id
+       WHERE u.status = 'active' ${city ? 'AND u.city = $1' : ''}
+       GROUP BY u.id
+       HAVING COUNT(r.id) > 0
+       ORDER BY reviews_count DESC, u.xp DESC
+       LIMIT 100`,
+      ...(city ? [city] : []),
+    );
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 export const PLANS = {
@@ -30,11 +31,11 @@ export class SubscriptionsService {
 
     if (plan === 'trial' || provider === 'trial') {
       // Idempotency: one trial per user — block chained free trials.
-      const prior: any[] = await this.prisma.$queryRawUnsafe(
-        `SELECT 1 FROM subscriptions WHERE user_id = $1::uuid AND provider = 'trial' LIMIT 1`,
-        userId,
-      );
-      if (prior.length) throw new BadRequestException('Bạn đã sử dụng bản dùng thử rồi');
+      const prior = await this.prisma.subscriptions.findFirst({
+        where: { user_id: userId, provider: 'trial' },
+        select: { id: true },
+      });
+      if (prior) throw new BadRequestException('Bạn đã sử dụng bản dùng thử rồi');
       return this.activate(userId, 'trial', 'trial', { trialDays: 7 });
     }
 
@@ -45,12 +46,17 @@ export class SubscriptionsService {
 
     // Insert the pending subscription first so the memo can carry the unique
     // subscription id (not a user-id prefix — that was forgeable/collision-prone).
-    const rows: any[] = await this.prisma.$queryRawUnsafe(
-      `INSERT INTO subscriptions (user_id, plan, provider, amount_vnd, status)
-       VALUES ($1::uuid, $2, $3, $4, 'trialing'::subscription_status) RETURNING id`,
-      userId, plan, 'vietqr', def.priceVnd,
-    );
-    const subId: string = rows[0]?.id;
+    const pending = await this.prisma.subscriptions.create({
+      data: {
+        user_id: userId,
+        plan,
+        provider: 'vietqr',
+        amount_vnd: def.priceVnd,
+        status: 'trialing',
+      },
+      select: { id: true },
+    });
+    const subId = pending.id;
     // Memo embeds a 16-hex slice of the subscription id → effectively unique,
     // and tied to one subscription (one user + one amount).
     const memo = `HNAG ${subId.replace(/-/g, '').slice(0, 16)}`.toUpperCase();
@@ -82,51 +88,143 @@ export class SubscriptionsService {
   }
 
   /**
-   * SePay webhook — called when money arrives in the personal bank account.
-   * Matches the transfer memo to a pending subscription and activates premium.
-   * Secured by SEPAY_WEBHOOK_TOKEN.
+   * SePay bank-transfer webhook.
+   *
+   * Security layers (closes audit hnag-audit-2026-05 CRITICAL "forgeable webhook"):
+   *   1. Bearer token compared with `timingSafeEqual` — no character-by-character
+   *      timing leak.
+   *   2. Optional but recommended HMAC-SHA256 of the raw body against
+   *      `SEPAY_HMAC_SECRET`. When the secret is configured, the signature is
+   *      MANDATORY and verified timing-safe.
+   *   3. Idempotency: every verified webhook is recorded in `payment_events`
+   *      with a UNIQUE (provider, external_txn_id). A replayed POST hits the
+   *      unique constraint and is a no-op — no double activation possible.
+   *   4. Amount + memo are matched server-side against the pending subscription
+   *      record (not from the webhook); attackers cannot forge a "premium for 1₫"
+   *      activation.
    */
-  async handleSepayWebhook(payload: any, authToken?: string): Promise<{ ok: boolean; matched?: boolean }> {
+  async handleSepayWebhook(
+    payload: any,
+    rawBody: string,
+    authToken?: string,
+    signature?: string,
+  ): Promise<{ ok: boolean; matched?: boolean; duplicate?: boolean }> {
+    // ── 1. Bearer token ────────────────────────────────────────────────
     const expected = process.env.SEPAY_WEBHOOK_TOKEN;
-    // Token is MANDATORY — if it isn't configured we refuse rather than accept
-    // unauthenticated webhooks (the previous behaviour let anyone grant premium).
     if (!expected) {
       this.logger.error('SePay webhook called but SEPAY_WEBHOOK_TOKEN is not configured — rejecting');
       throw new ForbiddenException('Webhook not configured');
     }
-    if (authToken !== expected) throw new ForbiddenException('Invalid webhook token');
+    if (!safeEqualStr(authToken ?? '', expected)) {
+      throw new ForbiddenException('Invalid webhook token');
+    }
+
+    // ── 2. HMAC signature (when configured) ────────────────────────────
+    const hmacSecret = process.env.SEPAY_HMAC_SECRET;
+    if (hmacSecret) {
+      if (!signature) {
+        this.logger.warn('SePay webhook missing signature header while HMAC secret is set');
+        throw new ForbiddenException('Missing signature');
+      }
+      const computed = createHmac('sha256', hmacSecret).update(rawBody).digest('hex');
+      // Strip an optional `sha256=` prefix to accommodate either format.
+      const provided = signature.replace(/^sha256=/i, '');
+      if (!safeEqualStr(provided, computed)) {
+        this.logger.warn('SePay webhook HMAC mismatch');
+        throw new ForbiddenException('Invalid signature');
+      }
+    }
+
+    // ── 3. Idempotency key from the bank transaction id ────────────────
+    const externalTxnId = String(
+      payload?.id ?? payload?.referenceCode ?? payload?.reference ?? payload?.transactionId ?? '',
+    ).trim();
+    if (!externalTxnId) {
+      this.logger.warn('SePay webhook: missing transaction id — cannot dedupe');
+      throw new BadRequestException('Missing transaction id');
+    }
 
     const content: string = (payload?.content ?? payload?.description ?? '').toString().toUpperCase();
     const amount: number = Number(payload?.transferAmount ?? payload?.amount ?? 0);
-    // Memo format: "HNAG <SUBID16>" — match the specific subscription, not a user prefix.
+
+    // Reserve the idempotency row up front. If we have already seen this
+    // transaction, the unique constraint will throw — we treat that as success
+    // (the original processing wins) and report `duplicate: true` to the caller.
+    try {
+      await this.prisma.payment_events.create({
+        data: {
+          provider: 'sepay',
+          external_txn_id: externalTxnId,
+          amount_vnd: Number.isFinite(amount) ? amount : 0,
+          raw_payload: payload as any,
+          signature: signature ?? null,
+          status: 'received',
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002' || /unique/i.test(String(err?.message))) {
+        this.logger.log(`SePay webhook: duplicate txn ${externalTxnId} — ignored`);
+        return { ok: true, matched: true, duplicate: true };
+      }
+      throw err;
+    }
+
+    // ── 4. Match the subscription by exact memo ────────────────────────
     const m = content.match(/HNAG\s+([A-F0-9]{16})/);
     if (!m) {
       this.logger.warn(`SePay webhook: no HNAG memo in "${content}"`);
+      await this.markEvent(externalTxnId, 'unmatched', 'no_memo');
       return { ok: true, matched: false };
     }
-    const subPrefix = m[1].toLowerCase();
-    const subs: any[] = await this.prisma.$queryRawUnsafe(
-      `SELECT s.id, s.user_id, s.plan::text AS plan, s.amount_vnd
-       FROM subscriptions s
-       WHERE s.provider = 'vietqr' AND s.status = 'trialing'
-         AND replace(s.id::text, '-', '') LIKE $1
-       ORDER BY s.created_at DESC LIMIT 1`,
-      `${subPrefix}%`,
-    );
-    if (subs.length === 0) {
-      this.logger.warn(`SePay webhook: no pending sub for ${subPrefix}`);
+    const subHexPrefix = m[1].toLowerCase();
+    const subs = await this.prisma.subscriptions.findMany({
+      where: {
+        provider: 'vietqr',
+        status: 'trialing',
+        // `replace(id::text, '-', '')` is what the memo encodes; we look up
+        // by startsWith on the dashless hex form. The 16-hex prefix is
+        // entropic enough that collisions are negligible at our scale.
+      },
+      orderBy: { created_at: 'desc' },
+      take: 50,
+    });
+    const sub = subs.find((s) => s.id.replace(/-/g, '').toLowerCase().startsWith(subHexPrefix));
+    if (!sub) {
+      this.logger.warn(`SePay webhook: no pending sub for ${subHexPrefix}`);
+      await this.markEvent(externalTxnId, 'unmatched', 'no_pending_sub');
       return { ok: true, matched: false };
     }
-    const sub = subs[0];
-    // Require the exact amount (or more). Reject zero/under-payment.
-    if (!(amount >= sub.amount_vnd)) {
+
+    if (!Number.isFinite(amount) || amount < (sub.amount_vnd ?? 0)) {
       this.logger.warn(`SePay webhook: amount ${amount} < required ${sub.amount_vnd}`);
+      await this.markEvent(externalTxnId, 'rejected', 'underpayment');
       return { ok: true, matched: false };
     }
+
     const months = sub.plan === 'yearly' ? 12 : sub.plan === 'family_yearly' ? 12 : 1;
-    await this.activate(sub.user_id, sub.plan, 'vietqr', { months });
-    this.logger.log(`SePay: activated premium for user ${sub.user_id} (${sub.plan})`);
+    await this.activate(sub.user_id!, sub.plan as keyof typeof PLANS, 'vietqr', { months });
+    await this.prisma.payment_events.updateMany({
+      where: { provider: 'sepay', external_txn_id: externalTxnId },
+      data: {
+        subscription_id: sub.id,
+        user_id: sub.user_id,
+        status: 'processed',
+        processed_at: new Date(),
+      },
+    });
+    this.logger.log(`SePay: activated premium for user ${sub.user_id} (${sub.plan}) via txn ${externalTxnId}`);
     return { ok: true, matched: true };
+  }
+
+  private async markEvent(externalTxnId: string, status: string, notes: string) {
+    try {
+      await this.prisma.payment_events.updateMany({
+        where: { provider: 'sepay', external_txn_id: externalTxnId },
+        data: { status, processed_at: new Date(), notes },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to update payment_event ${externalTxnId}: ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -142,31 +240,42 @@ export class SubscriptionsService {
     const [codePart, plan, monthsStr] = match.split(':');
     const months = parseInt(monthsStr) || 1;
     // One redemption per user per code (best-effort guard without a dedicated table):
-    const prior: any[] = await this.prisma.$queryRawUnsafe(
-      `SELECT 1 FROM subscriptions WHERE user_id = $1::uuid AND provider = 'promo'
-         AND external_id = $2 LIMIT 1`,
-      userId, `promo:${codePart.toUpperCase()}`,
-    );
-    if (prior.length) throw new BadRequestException('Bạn đã dùng mã này rồi');
+    const prior = await this.prisma.subscriptions.findFirst({
+      where: { user_id: userId, provider: 'promo', external_id: `promo:${codePart.toUpperCase()}` },
+      select: { id: true },
+    });
+    if (prior) throw new BadRequestException('Bạn đã dùng mã này rồi');
     this.logger.log(`Promo ${codePart} redeemed by ${userId} → ${plan} ${months}m`);
     return this.activate(userId, (plan as keyof typeof PLANS) ?? 'monthly', 'promo', { months, promoCode: codePart.toUpperCase() });
   }
 
   async myStatus(userId: string) {
-    const user = await this.prisma.users.findUnique({
-      where: { id: userId },
-      select: { is_premium: true, premium_until: true },
-    });
-    const subs: any[] = await this.prisma.$queryRawUnsafe(
-      `SELECT id, plan::text AS plan, provider, amount_vnd, status::text AS status,
-              trial_ends_at, current_period_end, created_at
-       FROM subscriptions WHERE user_id = $1::uuid ORDER BY created_at DESC LIMIT 1`,
-      userId,
-    );
+    // Audit hnag-audit-2026-05 §11: this used to be two sequential queries.
+    // Parallelize so cold p95 is bounded by max(query) rather than sum(query).
+    const [user, sub] = await Promise.all([
+      this.prisma.users.findUnique({
+        where: { id: userId },
+        select: { is_premium: true, premium_until: true },
+      }),
+      this.prisma.subscriptions.findFirst({
+        where: { user_id: userId },
+        orderBy: { created_at: 'desc' },
+        select: {
+          id: true,
+          plan: true,
+          provider: true,
+          amount_vnd: true,
+          status: true,
+          trial_ends_at: true,
+          current_period_end: true,
+          created_at: true,
+        },
+      }),
+    ]);
     return {
       isPremium: user?.is_premium ?? false,
       premiumUntil: user?.premium_until ?? null,
-      subscription: subs[0] ?? null,
+      subscription: sub,
     };
   }
 
@@ -193,4 +302,15 @@ export class SubscriptionsService {
     );
     return { status, isPremium: true, premiumUntil: until, subscriptionId: rows[0]?.id };
   }
+}
+
+/**
+ * Constant-time string equality. `timingSafeEqual` requires same-length
+ * buffers; we normalize via SHA-256 fingerprints so an attacker cannot use
+ * the length-mismatch fast-path to leak the secret's length either.
+ */
+function safeEqualStr(a: string, b: string): boolean {
+  const ha = require('crypto').createHash('sha256').update(String(a)).digest();
+  const hb = require('crypto').createHash('sha256').update(String(b)).digest();
+  return timingSafeEqual(ha, hb);
 }

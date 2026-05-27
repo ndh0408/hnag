@@ -11,6 +11,53 @@ const SYSTEM = `Bạn là Hà — trợ lý ẩm thực HNAG. Viết 1 câu (≤
 Tone tự nhiên đứa bạn, không quảng cáo, không bắt đầu bằng "Vì" hoặc "Bởi vì".
 Có thể gợi cảm xúc qua hình ảnh: "tô ấm bụng", "giòn rụm", "ngon hết sảy".`;
 
+/**
+ * gpt-4o-mini pricing (per 1M tokens, in USD) as of 2026-05.
+ * Update via OPENAI_PRICING env (`<inputUsd>:<outputUsd>` per 1M) if rates change.
+ *   input  → $0.15 / 1M  → 0.00000015 per token
+ *   output → $0.60 / 1M  → 0.00000060 per token
+ */
+const [OPENAI_INPUT_PER_TOKEN, OPENAI_OUTPUT_PER_TOKEN] = (() => {
+  const raw = process.env.OPENAI_PRICING_USD_PER_M ?? '0.15:0.60';
+  const [i, o] = raw.split(':').map((s) => Number(s.trim()));
+  const inP = Number.isFinite(i) ? i / 1_000_000 : 0.00000015;
+  const ouP = Number.isFinite(o) ? o / 1_000_000 : 0.00000060;
+  return [inP, ouP];
+})();
+
+/**
+ * Per-request cost tracker, mutated by every LLM call made during a single
+ * `suggest()` invocation. The orchestrator instantiates one and writes the
+ * final `costUsd` into `ai_sessions.llm_cost_usd` (audit hnag-audit-2026-05
+ * §15: previously NEVER populated → impossible to alert on spend anomalies).
+ *
+ * Plain object + mutation chosen over a service so each request gets a
+ * fresh isolated tracker — no cross-request leakage under concurrency.
+ */
+export interface LlmCostTracker {
+  costUsd: number;
+  promptTokens: number;
+  completionTokens: number;
+  calls: number;
+}
+
+export function newCostTracker(): LlmCostTracker {
+  return { costUsd: 0, promptTokens: 0, completionTokens: 0, calls: 0 };
+}
+
+function chargeUsage(
+  tracker: LlmCostTracker | undefined,
+  usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined,
+): void {
+  if (!tracker || !usage) return;
+  const p = usage.prompt_tokens ?? 0;
+  const c = usage.completion_tokens ?? 0;
+  tracker.promptTokens += p;
+  tracker.completionTokens += c;
+  tracker.costUsd += p * OPENAI_INPUT_PER_TOKEN + c * OPENAI_OUTPUT_PER_TOKEN;
+  tracker.calls += 1;
+}
+
 @Injectable()
 export class LlmReasonService {
   private readonly logger = new Logger(LlmReasonService.name);
@@ -28,7 +75,11 @@ export class LlmReasonService {
       : null;
   }
 
-  async batch(cards: Candidate[], ctx: EnrichedContext, opts?: { allowLlm?: boolean }): Promise<string[]> {
+  async batch(
+    cards: Candidate[],
+    ctx: EnrichedContext,
+    opts?: { allowLlm?: boolean; costTracker?: LlmCostTracker },
+  ): Promise<string[]> {
     const allowLlm = opts?.allowLlm !== false;
     // Cache key per (food_id × context-bucket)
     const bucket = this.bucketize(ctx);
@@ -54,7 +105,7 @@ export class LlmReasonService {
 
     const toGenerate = missingIdx.map((i) => cards[i]);
     try {
-      const generated = await this.callLlm(toGenerate, ctx);
+      const generated = await this.callLlm(toGenerate, ctx, opts?.costTracker);
       const pipe = this.redis.pipeline();
       missingIdx.forEach((idx, j) => {
         reasons[idx] = generated[j] ?? this.fallback(cards[idx], ctx);
@@ -78,6 +129,7 @@ export class LlmReasonService {
     cards: Candidate[],
     ctx: EnrichedContext,
     limit: number,
+    tracker?: LlmCostTracker,
   ): Promise<{ foodId: string; reason: string }[] | null> {
     const client = this.client;
     if (!client || cards.length === 0) return null;
@@ -105,6 +157,7 @@ CHỈ trả về index có trong danh sách. JSON: { "picks": [ {"i": 0, "reason
         temperature: 0.4,
         max_tokens: 500,
       });
+      chargeUsage(tracker, completion.usage);
       const parsed = JSON.parse(completion.choices[0]?.message?.content ?? '{}');
       const picks: { i: number; reason: string }[] = parsed.picks ?? [];
       const out: { foodId: string; reason: string }[] = [];
@@ -124,7 +177,7 @@ CHỈ trả về index có trong danh sách. JSON: { "picks": [ {"i": 0, "reason
     }
   }
 
-  private async callLlm(cards: Candidate[], ctx: EnrichedContext): Promise<string[]> {
+  private async callLlm(cards: Candidate[], ctx: EnrichedContext, tracker?: LlmCostTracker): Promise<string[]> {
     const user = `CONTEXT chung:
 - Thời tiết: ${ctx.weather.condition}, ${ctx.weather.temp}°C
 - Giờ: ${ctx.hour}h
@@ -148,6 +201,7 @@ Trả JSON: { "reasons": [{"food_idx": 1, "reason": "..."}, ...] }.`;
       temperature: 0.5,
       max_tokens: 300,
     });
+    chargeUsage(tracker, completion.usage);
 
     const raw = completion.choices[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(raw);

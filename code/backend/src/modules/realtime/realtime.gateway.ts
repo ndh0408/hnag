@@ -45,7 +45,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   @SubscribeMessage('subscribe:group')
   async joinGroup(@ConnectedSocket() client: Socket, @MessageBody() body: { groupId: string }) {
     const userId = client.data.userId as string | undefined;
-    if (!userId || !body?.groupId) return { ok: false, error: 'unauthorized' };
+    if (!userId || !isUuid(body?.groupId)) return { ok: false, error: 'bad_request' };
     // Only members may join a group room (was: anyone could subscribe and read
     // every group's live votes/events).
     const member = await this.prisma.group_members.findUnique({
@@ -57,9 +57,20 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   @SubscribeMessage('subscribe:restaurant')
-  joinRestaurant(@ConnectedSocket() client: Socket, @MessageBody() body: { restaurantId: string }) {
-    // Restaurant live data (crowding/wait) is public, but require an authed socket.
-    if (!client.data.userId || !body?.restaurantId) return { ok: false, error: 'unauthorized' };
+  async joinRestaurant(@ConnectedSocket() client: Socket, @MessageBody() body: { restaurantId: string }) {
+    // Restaurant live data (crowding/wait) is public, but require an authed
+    // socket. Audit hnag-audit-2026-05 #9: the previous version accepted any
+    // string as a room name, polluting the namespace and giving attackers a
+    // cheap way to spray room joins (memory pressure + potential future
+    // logic that grants permissions based on room membership).
+    if (!client.data.userId || !isUuid(body?.restaurantId)) {
+      return { ok: false, error: 'bad_request' };
+    }
+    const r = await this.prisma.restaurants.findUnique({
+      where: { id: body.restaurantId },
+      select: { id: true },
+    });
+    if (!r) return { ok: false, error: 'not_found' };
     client.join(`restaurant:${body.restaurantId}`);
     return { ok: true };
   }
@@ -81,4 +92,9 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   broadcastRestaurant(restaurantId: string, event: string, data: unknown) {
     this.server.to(`restaurant:${restaurantId}`).emit(event, data);
   }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isUuid(s: unknown): s is string {
+  return typeof s === 'string' && UUID_RE.test(s);
 }

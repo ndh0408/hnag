@@ -106,7 +106,12 @@ class _SearchScreenState extends State<SearchScreen> {
           itemCount: 4,
           itemBuilder: (_, i) => ClipRRect(
             borderRadius: BorderRadius.circular(AppRadii.md),
-            child: Image.network('https://picsum.photos/seed/t$i/400/250', fit: BoxFit.cover),
+            child: CachedNetworkImage(
+              imageUrl: 'https://picsum.photos/seed/t$i/400/250',
+              fit: BoxFit.cover,
+              placeholder: (_, __) => const ColoredBox(color: Color(0xFFEDEDED)),
+              errorWidget: (_, __, ___) => const ColoredBox(color: Color(0xFFEDEDED)),
+            ),
           ),
         ),
       ]);

@@ -3,6 +3,10 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
+import { PremiumGuard } from './common/guards/premium.guard';
+import { QueuesModule } from './common/queues/queues.module';
+import { FeatureFlagsService } from './common/config/feature-flags.service';
+import { AnalyticsService } from './common/analytics/analytics.service';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -48,13 +52,17 @@ import { MealModule } from './modules/meal/meal.module';
     }),
 
     // GraphQL (admin dashboard endpoint). Protected by GqlAdminGuard on every
-    // resolver; introspection + playground disabled in production.
+    // resolver; introspection + playground are OFF by default in every
+    // environment, including staging. Audit hnag-audit-2026-05 #11: staging
+    // is often less protected than prod and was leaking the admin schema.
+    // Operators can re-enable explicitly via GRAPHQL_INTROSPECTION=true (e.g.
+    // inside the home network) without flipping NODE_ENV.
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
       autoSchemaFile: false,
       typePaths: [require('path').join(__dirname, 'admin/admin.graphql')],
-      playground: process.env.NODE_ENV !== 'production',
-      introspection: process.env.NODE_ENV !== 'production',
+      playground: process.env.GRAPHQL_PLAYGROUND === 'true',
+      introspection: process.env.GRAPHQL_INTROSPECTION === 'true',
       path: '/graphql',
       context: ({ req, res }: any) => ({ req, res }),
     }),
@@ -84,10 +92,22 @@ import { MealModule } from './modules/meal/meal.module';
     BoostModule,
     PostsModule,
     MealModule,
+
+    // Background workers (BullMQ). Drains otp:email + push:fcm queues so
+    // the auth + notifications routes return without blocking on SMTP/FCM
+    // round-trips. Audit hnag-audit-2026-05 §9.
+    QueuesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },
+    // PremiumGuard is opt-in via @Premium() — not registered as APP_GUARD.
+    // It's exported here so any module's controller can pull it in via
+    // the @Premium() composite decorator without per-module provider wiring.
+    PremiumGuard,
+    FeatureFlagsService,
+    AnalyticsService,
   ],
+  exports: [PremiumGuard, FeatureFlagsService, AnalyticsService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

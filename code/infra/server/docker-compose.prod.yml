@@ -38,7 +38,22 @@ services:
     image: redis:7-alpine
     container_name: hnag-redis
     restart: unless-stopped
-    command: ["redis-server", "--save", "60", "1000", "--maxmemory", "768mb", "--maxmemory-policy", "allkeys-lru"]
+    # AOF + RDB combined — closes audit hnag-audit-2026-05 §5 ("Redis not persistent").
+    # appendfsync=everysec is the sane default: ≤1s data loss on crash, ~5%
+    # throughput overhead; RDB is the compact offline snapshot.
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+      - "--save"
+      - "60"
+      - "1000"
+      - "--maxmemory"
+      - "768mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -51,6 +66,38 @@ services:
       resources:
         limits: { memory: 1G }
 
+  # PgBouncer — transaction-pool mode in front of Postgres.
+  # Audit hnag-audit-2026-05 §4 / §39: at 5k concurrent users the default
+  # max_connections=100 saturates in seconds. PgBouncer multiplexes thousands
+  # of client connections onto a small fixed-size backend pool (30 conns).
+  # Backend talks to hnag-pgbouncer:6432 instead of hnag-postgres:5432.
+  # Transaction-mode requires Prisma to disable prepared statements — see the
+  # `pgbouncer=true` flag on the DATABASE_URL below.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: hnag-pgbouncer
+    restart: unless-stopped
+    environment:
+      DB_HOST: hnag-postgres
+      DB_PORT: "5432"
+      DB_USER: hnag
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
+      DB_NAME: hnag
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "30"
+      RESERVE_POOL_SIZE: "10"
+      SERVER_RESET_QUERY: DISCARD ALL
+      QUERY_WAIT_TIMEOUT: "120"
+      AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres: { condition: service_healthy }
+    secrets: [postgres_password]
+    networks: [hnag-internal]
+    deploy:
+      resources:
+        limits: { memory: 256M }
+
   backend:
     image: ${HNAG_BACKEND_IMAGE:-ghcr.io/${GHCR_OWNER:-yourname}/hnag-backend:latest}
     container_name: hnag-backend
@@ -59,12 +106,19 @@ services:
       - ./hnag.env
     environment:
       NODE_ENV: production
-      DATABASE_URL: "postgresql://hnag:${POSTGRES_PASSWORD}@hnag-postgres:5432/hnag?schema=public"
+      # Connects via PgBouncer (transaction-pool). `pgbouncer=true` disables
+      # prepared statements on the Prisma side, required by transaction-pool
+      # because connection identity is not stable across statements.
+      DATABASE_URL: "postgresql://hnag:${POSTGRES_PASSWORD}@hnag-pgbouncer:6432/hnag?schema=public&pgbouncer=true&connection_limit=30"
+      # Direct Postgres URL for `prisma migrate` and other operations that
+      # need session-level features. Prisma reads this when running migrations.
+      DIRECT_DATABASE_URL: "postgresql://hnag:${POSTGRES_PASSWORD}@hnag-postgres:5432/hnag?schema=public"
       REDIS_URL: "redis://hnag-redis:6379"
       PORT: "4000"
     depends_on:
-      postgres: { condition: service_healthy }
-      redis:    { condition: service_healthy }
+      postgres:  { condition: service_healthy }
+      pgbouncer: { condition: service_started }
+      redis:     { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:4000/health"]
       interval: 15s
@@ -76,6 +130,47 @@ services:
     # Auto-pulling :latest into prod is a supply-chain + availability risk
     # (an upstream/registry compromise or a bad build would deploy itself
     # unattended). Deploys are gated through CI → deploy.sh with a pinned tag.
+    deploy:
+      resources:
+        limits: { cpus: '2', memory: 1.5G }
+
+  # Second backend replica behind nginx least_conn (audit §6).
+  # Same image, same env, different container_name → DNS round-robins
+  # `hnag-backend` and `hnag-backend-2` to the nginx upstream. WebSocket
+  # fan-out is handled by the Redis adapter (already configured in
+  # main.ts via RedisIoAdapter), so a client connected to replica 1 still
+  # receives events broadcast from replica 2.
+  backend-2:
+    image: ${HNAG_BACKEND_IMAGE:-ghcr.io/${GHCR_OWNER:-yourname}/hnag-backend:latest}
+    container_name: hnag-backend-2
+    restart: unless-stopped
+    env_file:
+      - ./hnag.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "postgresql://hnag:${POSTGRES_PASSWORD}@hnag-pgbouncer:6432/hnag?schema=public&pgbouncer=true&connection_limit=30"
+      DIRECT_DATABASE_URL: "postgresql://hnag:${POSTGRES_PASSWORD}@hnag-postgres:5432/hnag?schema=public"
+      REDIS_URL: "redis://hnag-redis:6379"
+      PORT: "4000"
+    depends_on:
+      postgres:  { condition: service_healthy }
+      pgbouncer: { condition: service_started }
+      redis:     { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 40s
+    networks:
+      hnag-internal:
+        # `backend` alias means Docker DNS resolves `backend` to BOTH
+        # containers' IPs (round-robin). The Cloudflare tunnel config
+        # uses `http://backend:4000` as its ingress target, so adding
+        # this alias is the zero-CF-dashboard-change path to get traffic
+        # to both replicas. For finer-grained LB (least_conn,
+        # max_fails), wire an explicit nginx service in front.
+        aliases: [backend]
     deploy:
       resources:
         limits: { cpus: '2', memory: 1.5G }

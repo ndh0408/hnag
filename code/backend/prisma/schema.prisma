@@ -318,6 +318,17 @@ model notifications {
   users       users?   @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
 
+model saved_items {
+  user_id    String   @db.Uuid
+  food_id    String   @db.Uuid
+  collection String   @default("default")
+  note       String?
+  created_at DateTime @default(now())
+
+  @@id([user_id, food_id, collection])
+  @@index([user_id, created_at(sort: Desc)])
+}
+
 model streaks {
   user_id        String   @id @db.Uuid
   daily_decide   Int      @default(0)
@@ -390,6 +401,50 @@ model subscriptions {
   auto_renew          Boolean  @default(true)
   created_at          DateTime @default(now())
   users               users?   @relation(fields: [user_id], references: [id])
+  payment_events      payment_events[]
+}
+
+/// Forensic trail of account deletions. App Store 5.1.1(v) + Vietnam Decree
+/// 13/2023 require a deletion audit log that survives the anonymization of
+/// the `users` row itself. See sql/12_account_deletions.sql.
+model account_deletions {
+  id              String   @id @default(uuid()) @db.Uuid
+  user_id         String   @db.Uuid
+  email_hash      String?
+  reason          String?
+  source          String
+  ip_hash         String?
+  user_agent      String?
+  deleted_at      DateTime @default(now())
+  payload_summary Json?
+
+  @@index([user_id, deleted_at(sort: Desc)])
+  @@index([deleted_at(sort: Desc)])
+}
+
+/// Idempotency log for verified bank-webhook events.
+/// Insert is the proof we processed this txn — duplicate inserts are blocked
+/// by the (provider, external_txn_id) unique index, so a replayed webhook
+/// cannot activate premium twice. See sql/09_payment_events.sql.
+model payment_events {
+  id              String   @id @default(uuid()) @db.Uuid
+  provider        String
+  external_txn_id String
+  subscription_id String?  @db.Uuid
+  user_id         String?  @db.Uuid
+  amount_vnd      Int
+  raw_payload     Json
+  signature       String?
+  received_at     DateTime @default(now())
+  processed_at    DateTime?
+  status          String   @default("received")
+  notes           String?
+  subscriptions   subscriptions? @relation(fields: [subscription_id], references: [id])
+
+  @@unique([provider, external_txn_id])
+  @@index([received_at(sort: Desc)])
+  @@index([user_id, received_at(sort: Desc)])
+  @@index([subscription_id])
 }
 
 model restaurant_claims {

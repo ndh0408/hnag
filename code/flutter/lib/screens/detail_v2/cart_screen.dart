@@ -1,9 +1,14 @@
 // CartScreen — list cart items with qty steppers + voucher + total + checkout CTA.
+//
+// Persistence: every mutation calls CartStore.save() so an app kill or OS
+// background-eviction does not wipe the cart. CartStore.load() runs at the
+// route entry (caller responsibility — usually app.dart / go_router).
 
 import 'package:flutter/material.dart';
 
 import '../../design/tokens.dart';
 import '../../design/theme.dart';
+import '../../state/cart_store.dart';
 import '../../widgets/ds/ds.dart';
 
 class CartItem {
@@ -30,6 +35,7 @@ class CartItem {
 class CartScreen extends StatefulWidget {
   final List<CartItem> items;
   final String restaurantName;
+  final String? restaurantId;
   final int deliveryFeeVnd;
   final void Function(List<CartItem> items)? onChange;
   final void Function(List<CartItem> items, int total) onCheckout;
@@ -38,6 +44,7 @@ class CartScreen extends StatefulWidget {
     super.key,
     required this.items,
     required this.restaurantName,
+    this.restaurantId,
     required this.deliveryFeeVnd,
     required this.onCheckout,
     this.onChange,
@@ -67,6 +74,27 @@ class _CartScreenState extends State<CartScreen> {
       if (_items[i].qty == 0) _items.removeAt(i);
     });
     widget.onChange?.call(_items);
+    _persist();
+  }
+
+  /// Persist asynchronously — never block UI on disk write. We intentionally
+  /// drop errors: a failed persist is annoying-but-non-fatal (cart simply
+  /// won't survive an app kill that hour), and surfacing the error to the
+  /// user mid-cart would be more disruptive than the loss it would prevent.
+  Future<void> _persist() async {
+    try {
+      if (_items.isEmpty) {
+        await CartStore.clear();
+        return;
+      }
+      await CartStore.save(CartSnapshot(
+        items: _items,
+        restaurantId: widget.restaurantId,
+        restaurantName: widget.restaurantName,
+        deliveryFeeVnd: widget.deliveryFeeVnd,
+        savedAt: DateTime.now(),
+      ));
+    } catch (_) {/* drop — see comment above */}
   }
 
   void _applyVoucher() {

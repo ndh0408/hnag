@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../theme/app_theme.dart';
 
 /// Restaurant Claim flow — see docs/13-RESTAURANT-CLAIM.md §6.
@@ -329,7 +330,15 @@ class _StepWrap extends StatelessWidget {
         children: [
           if (image != null) ClipRRect(
             borderRadius: BorderRadius.circular(AppRadii.lg),
-            child: AspectRatio(aspectRatio: 16 / 9, child: Image.network(image!, fit: BoxFit.cover)),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: CachedNetworkImage(
+                imageUrl: image!,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => const ColoredBox(color: Color(0xFFEDEDED)),
+                errorWidget: (_, __, ___) => const ColoredBox(color: Color(0xFFEDEDED)),
+              ),
+            ),
           ),
           if (image != null) const SizedBox(height: AppSpacing.x4),
           Text(title, style: AppTypography.headingMd),

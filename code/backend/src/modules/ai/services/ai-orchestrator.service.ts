@@ -11,7 +11,7 @@ import { MoodEngineService } from './mood-engine.service';
 import { ContextBuilderService } from './context-builder.service';
 import { CandidateGeneratorService } from './candidate-generator.service';
 import { RankerService } from './ranker.service';
-import { LlmReasonService } from './llm-reason.service';
+import { LlmReasonService, newCostTracker } from './llm-reason.service';
 
 export interface SuggestRequest {
   userId: string;
@@ -93,9 +93,14 @@ export class AiOrchestratorService {
     let finalTop: typeof ranked = [];
     let reasons: string[] = [];
 
+    // Per-request cost accumulator. Mutated by every LLM call and written
+    // into `ai_sessions.llm_cost_usd` so we can alert on spend anomalies
+    // (audit hnag-audit-2026-05 §15 — column existed, never populated).
+    const costTracker = newCostTracker();
+
     // 5a. Let the LLM actually choose for mood/detail flows (validated → no hallucination).
     if (wantLlmSelect) {
-      const picks = await this.reason.select(ranked.slice(0, 15), enriched, req.limit);
+      const picks = await this.reason.select(ranked.slice(0, 15), enriched, req.limit, costTracker);
       if (picks?.length) {
         const byId = new Map(ranked.map((c) => [c.foodId, c] as const));
         for (const p of picks) {
@@ -119,7 +124,10 @@ export class AiOrchestratorService {
     // 6. Fill any empty reasons with captions. If the LLM already chose, use the
     // cheap fallback for the remainder to bound cost.
     if (reasons.some((r) => !r)) {
-      const captions = await this.reason.batch(finalTop, enriched, { allowLlm: allowLlm && !usedLlmForSelect });
+      const captions = await this.reason.batch(finalTop, enriched, {
+        allowLlm: allowLlm && !usedLlmForSelect,
+        costTracker,
+      });
       reasons = finalTop.map((_, i) => (reasons[i] && reasons[i].length ? reasons[i] : (captions[i] ?? '')));
     }
 
@@ -149,9 +157,12 @@ export class AiOrchestratorService {
     // Cache
     await this.redis.setex(cacheKey, this.cacheTtlSec, JSON.stringify(response));
 
-    // Log
+    // Log + per-session cost
     const latencyMs = Date.now() - t0;
-    this.logger.log(`/ai/suggest user=${req.userId} mode=${req.mode} latency=${latencyMs}ms cards=${cards.length}`);
+    this.logger.log(
+      `/ai/suggest user=${req.userId} mode=${req.mode} latency=${latencyMs}ms cards=${cards.length} ` +
+        `llm_calls=${costTracker.calls} llm_cost_usd=${costTracker.costUsd.toFixed(6)}`,
+    );
     await this.prisma.ai_sessions.create({
       data: {
         id: sessionId,
@@ -162,8 +173,23 @@ export class AiOrchestratorService {
         ranker_scores: finalTop.map((c) => c.scores) as any,
         reason_codes: finalTop.flatMap((c) => c.reasonCodes),
         latency_ms: latencyMs,
+        // Audit hnag-audit-2026-05 §15: column was always null. Now carries
+        // the real spend for this single suggest() invocation. Sum() this
+        // column by user/day for spend dashboards + cost-anomaly alerts.
+        // Decimal(8,5) caps at 999.99999 USD per session → far above any
+        // single legitimate call.
+        llm_cost_usd: costTracker.costUsd.toFixed(5),
       },
     });
+
+    // Maintain a per-user daily running total in Redis so we can flag
+    // spend anomalies in real time without a per-request DB aggregate.
+    if (costTracker.costUsd > 0) {
+      const dayKey = `ai:spend:${req.userId}:${new Date().toISOString().slice(0, 10)}`;
+      const cents = Math.round(costTracker.costUsd * 100_000); // 1e-5 USD precision
+      await this.redis.incrby(dayKey, cents);
+      await this.redis.expire(dayKey, 7 * 24 * 3600);
+    }
 
     return response;
   }
