@@ -16,6 +16,7 @@ import { FridgeService } from './services/fridge.service';
 import { VoiceService } from './services/voice.service';
 import { ModelRouter } from './services/model-router.service';
 import { ModerationService } from './services/moderation.service';
+import { CfBuilderService } from './services/cf-builder.service';
 import { PromptRegistry } from './prompts/prompt-registry.service';
 
 @Module({
@@ -35,6 +36,7 @@ import { PromptRegistry } from './prompts/prompt-registry.service';
     PromptRegistry,
     ModelRouter,
     ModerationService,
+    CfBuilderService,
   ],
   exports: [
     AiOrchestratorService,

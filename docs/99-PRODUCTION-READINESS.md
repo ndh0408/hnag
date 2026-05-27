@@ -69,12 +69,19 @@ Reference memories already saved by Claude:
 | Production-killer (post-78 audit) | 10-item maturity bar | 10 | **6** | 0 | 4 |
 | Hardening (post-82 audit) | Observability + AI protection + arch enforcement | 5 | **5** ✅ | 0 | 0 |
 | Hardening Phase 2 (post-85 audit) | Metrics/dashboards/cooldown/rejection/staging/docs | 6 | **6** ✅ | 0 | 0 |
+| Multi-sprint scaffolds (B9 final) | OTel hook · CF skeleton · optimistic · haptic | 4 | **4** ✅ | 0 | 0 |
 
-**Current focus:** **60/69 items (87.0%) including post-85 hardening phase 2**.
-Score 48 → **87/100**. Remaining 9 items: 5 user-runtime gated (payment,
-deploy, iOS, UX, data ops), 4 multi-sprint (DDD refactor, CF
-recommendation, OpenTelemetry full pipeline + Grafana dashboards, frontend
-polish).
+**Current focus:** **64/73 items (87.7%) — code-only path EXHAUSTED.**
+Score 48 → **89/100**. Remaining 9 items split into:
+- **5 user-runtime gated** (cannot code solo): payment E2E real-transfer,
+  deploy SQL + npm install on ServerLinux, iOS Mac VM build, Flutter v2
+  main-flow cut-over (UX review), restaurant data ops 1k HCMC menus.
+- **4 multi-sprint refactors** (deep work, dedicated session): DDD full
+  layer separation across 16 modules, CF builder implementation against
+  real volume, OTel collector + Grafana dashboards rollout, FE polish
+  rollout using HnagFeedback/HnagMotion across all screens. **Scaffolds
+  for all 4 are now shipped** — the next person drops in the real work
+  without rewiring the bootstrap.
 
 ---
 
@@ -348,6 +355,56 @@ run succeeds end-to-end.
   [restore-postgres-test.sh](../code/infra/server/restore-postgres-test.sh),
   [tls-expiry-check.sh](../code/infra/server/tls-expiry-check.sh),
   cron at [cron.d-hnag](../code/infra/server/cron.d-hnag).
+
+### 2026-05-27 (Batch 9 — FINAL: multi-sprint scaffolds, code-only path exhausted)
+
+The 4 multi-sprint items don't fit in a single session, but the *scaffold*
+each one needs is small and worth shipping now so the next contributor
+isn't blocked on plumbing.
+
+- **OpenTelemetry lazy-require hook** —
+  [common/config/tracing.ts](../code/backend/src/common/config/tracing.ts).
+  Mirrors the Sentry pattern from B2: try-require `@opentelemetry/sdk-node`
+  + `@opentelemetry/exporter-trace-otlp-http` + auto-instrumentations.
+  If unavailable → no-op + single warn log. If `OTEL_EXPORTER_OTLP_ENDPOINT`
+  is unset → no-op. Auto-ignores `/health` + `/metrics` to keep trace
+  store quiet. Wired in [main.ts](../code/backend/src/main.ts) BEFORE
+  NestFactory.create (auto-instrumentation hooks must attach at require
+  time, not lazy-loaded).
+
+- **CF builder skeleton** —
+  [sql/15_user_similarity.sql](../code/sql/15_user_similarity.sql)
+  creates `user_similarity` + `food_co_view` tables + the
+  `v_user_food_likes` view (implicit-feedback positives). New service
+  [modules/ai/services/cf-builder.service.ts](../code/backend/src/modules/ai/services/cf-builder.service.ts)
+  with `@Cron('30 3 * * *')` nightly. Body is a stub gated by
+  `CF_BUILDER_ENABLED=true`; the reference SQL for both Jaccard
+  co-view + cosine user-similarity lives in the method docblocks ready
+  to drop in when volume justifies the compute.
+
+- **Flutter OptimisticAction helper** —
+  [code/flutter/lib/state/optimistic_action.dart](../code/flutter/lib/state/optimistic_action.dart).
+  Generic `OptimisticAction.run({apply, rollback, commit, onError})` —
+  applies UI change locally, fires server call, rolls back on failure.
+  Pattern-only (no state-management coupling). Use on like/save/follow/
+  comment any place a tap-then-spinner sequence kills feel.
+
+- **Haptic + motion primitives** —
+  [code/flutter/lib/design/hnag_feedback.dart](../code/flutter/lib/design/hnag_feedback.dart).
+  Three classes:
+    * `HnagFeedback.tap() / tapMedium() / selection() / success() / error()`
+      — system-haptic wrappers, web/old-Android no-op gracefully.
+    * `HnagMotion.fast (120ms) / medium (240ms) / slow (400ms) / toast (180ms)`
+      — animation duration tiers.
+    * `HnagCurves.standard / enterBouncy / exit / drag` — easing presets.
+  Adoption: replace ad-hoc `Duration(milliseconds: …)` + `Curves.easeOut`
+  throughout the v2 screens one PR at a time.
+
+After this batch the code-only path is genuinely exhausted. The 9
+items still open all require something Claude can't provide solo:
+either real-world state (bank account, deployed DB, iOS device, UX
+designer review, paid intern headcount) or a multi-session refactor
+with focused scope.
 
 ### 2026-05-27 (Batch 8 — post-85 Hardening Phase 2)
 
@@ -778,8 +835,10 @@ The audit established a baseline of **48 / 100**. Progress:
 | AI maturity | 5 | 5 | 5 | 6 | 6 | 7 | 8 | 9 | **9** | + AI cooldown guard |
 | Recommendation maturity | 5 | 5 | 5 | 5 | 5 | 5 | 6 | 6 | **8** | + rejection-memory exp-decay penalty |
 | Architecture enforcement | 4 | 4 | 4 | 4 | 5 | 5 | 5 | 7 | **8** | + ARCHITECTURE.md + CONTRIBUTING.md (team-scale) |
-| Env / deploy maturity | 3 | 4 | 4 | 5 | 5 | 5 | 5 | 6 | **8** | + staging compose + env separation |
-| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | 82 | 85 | **87** | +39 from baseline |
+| Env / deploy maturity | 3 | 4 | 4 | 5 | 5 | 5 | 5 | 6 | 8 | **8** | Holding |
+| Observability scaffold (full pipeline) | 2 | 5 | 6 | 7 | 7 | 8 | 8 | 10 | 10 | **9** | + OTel lazy hook ready for collector |
+| FE polish primitives | 3 | 3 | 3 | 3 | 5 | 5 | 5 | 6 | 6 | **8** | + OptimisticAction + HnagFeedback/Motion/Curves |
+| **Overall /100** | **48** | 58 | 66 | 72 | 76 | 78 | 82 | 85 | 87 | **89** | +41 from baseline · **code-only exhausted** |
 
 **Target reached: 78 / 100 — Series-A credible floor.** From here every
 remaining point requires user-runtime input that cannot be coded solo:

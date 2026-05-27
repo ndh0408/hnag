@@ -1,4 +1,10 @@
 import 'reflect-metadata';
+// IMPORTANT: tracing must be imported AND initialized before any other code
+// that creates HTTP/DB clients — OTel auto-instrumentation hooks attach at
+// require-time, so a later init misses the early-boot spans.
+import { initTracing } from './common/config/tracing';
+initTracing();
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
