@@ -70,7 +70,7 @@ export class OtpService {
   constructor(
     @Inject(REDIS) private readonly redis: IORedis,
     private readonly email: EmailService,
-    @Optional() @InjectQueue('otp:email') private readonly emailQueue?: Queue,
+    @Optional() @InjectQueue('otp-email') private readonly emailQueue?: Queue,
   ) {}
 
   private norm(email: string): string {

@@ -18,7 +18,7 @@ import { NotificationsModule } from '../../modules/notifications/notifications.m
  *   - registers the two queues the audit specifically flagged: `otp:email`
  *     and `push:fcm`
  *   - mounts the two processors that drain them
- *   - is @Global so individual modules can `@InjectQueue('otp:email')`
+ *   - is @Global so individual modules can `@InjectQueue('otp-email')`
  *     without importing this module everywhere
  */
 @Global()
@@ -26,7 +26,7 @@ import { NotificationsModule } from '../../modules/notifications/notifications.m
   imports: [
     BullModule.registerQueue(
       {
-        name: 'otp:email',
+        name: 'otp-email',
         defaultJobOptions: {
           attempts: 4,
           backoff: { type: 'exponential', delay: 2000 },
@@ -35,7 +35,7 @@ import { NotificationsModule } from '../../modules/notifications/notifications.m
         },
       },
       {
-        name: 'push:fcm',
+        name: 'push-fcm',
         defaultJobOptions: {
           attempts: 5,
           backoff: { type: 'exponential', delay: 3000 },

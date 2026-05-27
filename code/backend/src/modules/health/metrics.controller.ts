@@ -47,8 +47,8 @@ export class MetricsController {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(REDIS) private readonly redis: IORedis,
-    @Optional() @InjectQueue('otp:email') private readonly otpQueue?: Queue,
-    @Optional() @InjectQueue('push:fcm') private readonly pushQueue?: Queue,
+    @Optional() @InjectQueue('otp-email') private readonly otpQueue?: Queue,
+    @Optional() @InjectQueue('push-fcm') private readonly pushQueue?: Queue,
   ) {}
 
   @Get()

@@ -14,7 +14,7 @@ import { AuthModule } from '../modules/auth/auth.module'; // re-exports JwtModul
     AuthModule,
     // Same registerQueue trick as HealthModule — bind the live queue
     // singletons so the observability controller can read counts.
-    BullModule.registerQueue({ name: 'otp:email' }, { name: 'push:fcm' }),
+    BullModule.registerQueue({ name: 'otp-email' }, { name: 'push-fcm' }),
   ],
   controllers: [ObservabilityController],
   providers: [AdminAuthService, GqlAdminGuard, AdminResolver, ClaimsResolver, MetricsResolver],

@@ -30,8 +30,8 @@ export class ObservabilityController {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(REDIS) private readonly redis: IORedis,
-    @Optional() @InjectQueue('otp:email') private readonly otpQueue?: Queue,
-    @Optional() @InjectQueue('push:fcm') private readonly pushQueue?: Queue,
+    @Optional() @InjectQueue('otp-email') private readonly otpQueue?: Queue,
+    @Optional() @InjectQueue('push-fcm') private readonly pushQueue?: Queue,
   ) {}
 
   /**
@@ -43,8 +43,8 @@ export class ObservabilityController {
   @Get('queues')
   async queues() {
     const out: Record<string, any> = {};
-    if (this.otpQueue) out['otp:email'] = await this.summarize(this.otpQueue);
-    if (this.pushQueue) out['push:fcm'] = await this.summarize(this.pushQueue);
+    if (this.otpQueue) out['otp-email'] = await this.summarize(this.otpQueue);
+    if (this.pushQueue) out['push-fcm'] = await this.summarize(this.pushQueue);
     return { queues: out, ts: new Date().toISOString() };
   }
 

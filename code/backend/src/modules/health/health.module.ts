@@ -7,7 +7,7 @@ import { MetricsController } from './metrics.controller';
 @Module({
   // Import the queues purely so `@InjectQueue` in the health + metrics
   // controllers resolves the *same* instance the workers consume.
-  imports: [BullModule.registerQueue({ name: 'otp:email' }, { name: 'push:fcm' })],
+  imports: [BullModule.registerQueue({ name: 'otp-email' }, { name: 'push-fcm' })],
   controllers: [HealthController, MetricsController],
 })
 export class HealthModule {}

@@ -19,7 +19,7 @@ export interface EmailOtpJob {
  * thread. With this worker the `/auth/email-otp/send` endpoint returns in
  * ≤10ms (just a Redis ENQUEUE) instead of 1-2s (full SMTP RTT).
  */
-@Processor('otp:email', { concurrency: 5 })
+@Processor('otp-email', { concurrency: 5 })
 export class EmailOtpProcessor extends WorkerHost {
   private readonly logger = new Logger(EmailOtpProcessor.name);
 

@@ -21,7 +21,7 @@ export interface PushJob {
  * concurrency=10 — FCM HTTP API tolerates this comfortably and most
  * notifications are sent in bursts (group voting result, order updates).
  */
-@Processor('push:fcm', { concurrency: 10 })
+@Processor('push-fcm', { concurrency: 10 })
 export class PushProcessor extends WorkerHost {
   private readonly logger = new Logger(PushProcessor.name);
 

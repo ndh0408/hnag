@@ -39,8 +39,8 @@ export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(REDIS) private readonly redis: IORedis,
-    @Optional() @InjectQueue('otp:email') private readonly otpQueue?: Queue,
-    @Optional() @InjectQueue('push:fcm') private readonly pushQueue?: Queue,
+    @Optional() @InjectQueue('otp-email') private readonly otpQueue?: Queue,
+    @Optional() @InjectQueue('push-fcm') private readonly pushQueue?: Queue,
   ) {}
 
   @Get()
@@ -90,14 +90,14 @@ export class HealthController {
 
   private async gatherQueueStats() {
     const out: Record<string, { waiting: number; active: number; failed: number; delayed: number } | null> = {
-      'otp:email': null,
-      'push:fcm': null,
+      'otp-email': null,
+      'push-fcm': null,
     };
     if (this.otpQueue) {
-      try { out['otp:email'] = await this.queueDepth(this.otpQueue); } catch {/* leave null */}
+      try { out['otp-email'] = await this.queueDepth(this.otpQueue); } catch {/* leave null */}
     }
     if (this.pushQueue) {
-      try { out['push:fcm'] = await this.queueDepth(this.pushQueue); } catch {/* leave null */}
+      try { out['push-fcm'] = await this.queueDepth(this.pushQueue); } catch {/* leave null */}
     }
     return out;
   }
