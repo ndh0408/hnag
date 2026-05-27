@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/food_card.dart';
 import 'auth_service.dart';
+import 'api_exception.dart';
 import 'resilient_client.dart';
 
 /// HNAG API client — talks to api.tothanhthuy.cloud.
@@ -344,24 +345,28 @@ class HnagApi {
   // ─── Phone OTP ───────────────────────────────────────────────────────
   /// Send 6-digit OTP to a Vietnamese phone number (E.164 or 0-prefixed).
   /// Backend hashes + rate-limits per memory; never returns the code.
+  ///
+  /// Throws `ApiException` (with friendly vi-VN message) on network /
+  /// server failure — UI sites doing `_error = e.toString()` get a usable
+  /// line. Returns true only on backend 2xx.
   Future<bool> sendPhoneOtp(String phone) async {
-    try {
-      final r = await http.post(
-        Uri.parse('$baseUrl/v1/auth/phone-otp/send'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'phone': phone}),
-      ).timeout(const Duration(seconds: 12));
-      return r.statusCode == 200;
-    } catch (_) { return false; }
+    final r = await _safePost(
+      '/v1/auth/phone-otp/send',
+      body: {'phone': phone},
+      timeout: const Duration(seconds: 12),
+    );
+    if (r.statusCode != 200) throw ApiException.fromResponse(r);
+    return true;
   }
 
   Future<Map<String, dynamic>?> verifyPhoneOtp(String phone, String code) async {
-    final r = await http.post(
-      Uri.parse('$baseUrl/v1/auth/phone-otp/verify'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'phone': phone, 'code': code}),
-    ).timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) return null;
+    final r = await _safePost(
+      '/v1/auth/phone-otp/verify',
+      body: {'phone': phone, 'code': code},
+      timeout: const Duration(seconds: 12),
+    );
+    if (r.statusCode == 401) return null; // wrong code — let caller branch
+    if (r.statusCode != 200) throw ApiException.fromResponse(r);
     return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
   }
 
@@ -372,17 +377,19 @@ class HnagApi {
     String? fullName,
     String? email,
   }) async {
-    final r = await http.post(
-      Uri.parse('$baseUrl/v1/auth/apple'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final r = await _safePost(
+      '/v1/auth/apple',
+      body: {
         'identityToken': identityToken,
         if (authorizationCode != null) 'authorizationCode': authorizationCode,
         if (fullName != null) 'fullName': fullName,
         if (email != null) 'email': email,
-      }),
-    ).timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200 && r.statusCode != 201) return null;
+      },
+      timeout: const Duration(seconds: 15),
+    );
+    if (r.statusCode != 200 && r.statusCode != 201) {
+      throw ApiException.fromResponse(r);
+    }
     return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
   }
 
@@ -559,6 +566,32 @@ class HnagApi {
       return (jsonDecode(r.body) as Map<String, dynamic>)['data'] as Map<String, dynamic>?;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// POST JSON to the API; translate any transport-layer failure (DNS down,
+  /// connection refused, timeout, SocketException) into a user-friendly
+  /// `ApiException` so UIs doing `_error = e.toString()` get vi-VN copy.
+  /// Returns the raw http.Response — callers decide how to map the status.
+  ///
+  /// Audit follow-up (2026-05-27 emulator test): the auth POSTs in this
+  /// file previously bubbled `ClientException` raw to the screen.
+  Future<http.Response> _safePost(
+    String path, {
+    required Map<String, dynamic> body,
+    Duration timeout = const Duration(seconds: 12),
+    Map<String, String>? headers,
+  }) async {
+    try {
+      return await http
+          .post(
+            Uri.parse('$baseUrl$path'),
+            headers: {'Content-Type': 'application/json', ...?headers},
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
+    } catch (e) {
+      throw ApiException.from(e);
     }
   }
 

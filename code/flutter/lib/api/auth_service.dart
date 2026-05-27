@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
+import 'api_exception.dart';
+
 class AuthUser {
   final String id;
   final String username;
@@ -62,99 +64,79 @@ class AuthService {
     _userController.add(_user);
   }
 
-  /// Send a 6-digit login code to [email]. Throws on failure.
+  /// Send a 6-digit login code to [email]. Throws `ApiException` on failure
+  /// — the message is user-safe Vietnamese, so UI sites can do
+  /// `_error = e.toString()` and surface it as-is.
   Future<void> sendEmailOtp(String email) async {
-    final r = await http.post(
-      Uri.parse('$_baseUrl/v1/auth/email-otp/send'),
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email.trim()}),
-    ).timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw _httpError(r);
+    final r = await _safePost(
+      '/v1/auth/email-otp/send',
+      body: {'email': email.trim()},
+      timeout: const Duration(seconds: 15),
+    );
+    if (r.statusCode != 200) throw ApiException.fromResponse(r);
   }
 
   /// Verify the emailed code and persist the returned tokens.
   /// Returns false when the code is wrong/expired (401).
+  /// Throws `ApiException` on network / server failure.
   Future<bool> verifyEmailOtp(String email, String code) async {
-    final r = await http.post(
-      Uri.parse('$_baseUrl/v1/auth/email-otp/verify'),
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final r = await _safePost(
+      '/v1/auth/email-otp/verify',
+      body: {
         'email': email.trim(),
         'code': code,
         'device': _deviceInfo(),
-      }),
-    ).timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) {
-      if (r.statusCode == 401) return false;
-      throw _httpError(r);
-    }
-    final body = jsonDecode(r.body) as Map<String, dynamic>;
-    final data = body['data'] as Map<String, dynamic>;
-    await _persistTokens(
-      access: data['accessToken'] as String,
-      refresh: data['refreshToken'] as String,
-      user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
+      },
+      timeout: const Duration(seconds: 12),
     );
-    return true;
+    if (r.statusCode == 401) return false;
+    if (r.statusCode != 200) throw ApiException.fromResponse(r);
+    return _ingestSession(r);
   }
 
-  /// Verify a phone OTP, persist tokens.
+  /// Verify a phone OTP, persist tokens. Same contract as [verifyEmailOtp].
   Future<bool> verifyPhoneOtp(String phone, String code) async {
-    final r = await http.post(
-      Uri.parse('$_baseUrl/v1/auth/phone-otp/verify'),
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final r = await _safePost(
+      '/v1/auth/phone-otp/verify',
+      body: {
         'phone': phone.trim(),
         'code': code,
         'device': _deviceInfo(),
-      }),
-    ).timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) {
-      if (r.statusCode == 401) return false;
-      throw _httpError(r);
-    }
-    final body = jsonDecode(r.body) as Map<String, dynamic>;
-    final data = body['data'] as Map<String, dynamic>;
-    await _persistTokens(
-      access: data['accessToken'] as String,
-      refresh: data['refreshToken'] as String,
-      user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
+      },
+      timeout: const Duration(seconds: 12),
     );
-    return true;
+    if (r.statusCode == 401) return false;
+    if (r.statusCode != 200) throw ApiException.fromResponse(r);
+    return _ingestSession(r);
   }
 
-  /// Sign in with Apple. Returns true on success.
-  /// Uses sign_in_with_apple package to get the identityToken, then sends it
-  /// to backend /v1/auth/apple for validation + session creation.
+  /// Sign in with Apple. Returns true on success, false on user cancel or
+  /// any failure. Network failures are swallowed (caller doesn't get to
+  /// distinguish "user pressed Cancel" from "DNS down"). UI surfacing
+  /// the failure should show a generic "Đăng nhập Apple thất bại" toast.
   Future<bool> signInWithApple() async {
-    // Lazy import via dynamic dispatch so non-iOS builds don't crash.
     try {
       final credential = await SignInWithApple.getAppleIDCredential(
         scopes: [AppleIDAuthorizationScopes.email, AppleIDAuthorizationScopes.fullName],
       );
       final idToken = credential.identityToken;
       if (idToken == null) return false;
-      final r = await http.post(
-        Uri.parse('$_baseUrl/v1/auth/apple'),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      final r = await _safePost(
+        '/v1/auth/apple',
+        body: {
           'identityToken': idToken,
           if (credential.authorizationCode != null) 'authorizationCode': credential.authorizationCode,
           if (credential.givenName != null || credential.familyName != null)
             'fullName': '${credential.givenName ?? ''} ${credential.familyName ?? ''}'.trim(),
           if (credential.email != null) 'email': credential.email,
           'device': _deviceInfo(),
-        }),
-      ).timeout(const Duration(seconds: 15));
-      if (r.statusCode != 200 && r.statusCode != 201) return false;
-      final body = jsonDecode(r.body) as Map<String, dynamic>;
-      final data = body['data'] as Map<String, dynamic>;
-      await _persistTokens(
-        access: data['accessToken'] as String,
-        refresh: data['refreshToken'] as String,
-        user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
+        },
+        timeout: const Duration(seconds: 15),
       );
-      return true;
+      if (r.statusCode != 200 && r.statusCode != 201) return false;
+      return _ingestSession(r);
+    } on ApiException {
+      return false;
     } catch (_) {
       return false;
     }
@@ -173,20 +155,19 @@ class AuthService {
   Future<bool> _validateOrRefresh() async {
     if (_refreshToken == null) return _accessToken != null;
     try {
-      final r = await http.post(
-        Uri.parse('$_baseUrl/v1/auth/refresh'),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode({'refreshToken': _refreshToken}),
-      ).timeout(const Duration(seconds: 8));
-      if (r.statusCode != 200) return false;
-      final body = jsonDecode(r.body) as Map<String, dynamic>;
-      final data = body['data'] as Map<String, dynamic>;
-      await _persistTokens(
-        access: data['accessToken'] as String,
-        refresh: data['refreshToken'] as String,
-        user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
+      final r = await _safePost(
+        '/v1/auth/refresh',
+        body: {'refreshToken': _refreshToken},
+        timeout: const Duration(seconds: 8),
       );
-      return true;
+      if (r.statusCode != 200) return false;
+      return _ingestSession(r);
+    } on ApiException catch (e) {
+      // Hot-start ran with no network → keep the cached session intact so
+      // the user isn't kicked back to login on a momentary signal drop. We
+      // only return `false` (which triggers signOut) when the SERVER said no.
+      if (e.code == 'OFFLINE' || e.code == 'TIMEOUT') return true;
+      return false;
     } catch (_) {
       return false;
     }
@@ -234,13 +215,54 @@ class AuthService {
     return r;
   }
 
-  Exception _httpError(http.Response r) {
+  // ── Internal helpers ────────────────────────────────────────────────
+
+  /// POST JSON to the API and translate every transport-layer failure into
+  /// a user-friendly `ApiException`. Callers can inspect `.code` for branch
+  /// logic and surface `.toString()` directly to the UI.
+  ///
+  /// Audit follow-up (2026-05-27 emulator test): the previous bare
+  /// `http.post(...).timeout(...)` chain rethrew `SocketException` /
+  /// `ClientException` / `TimeoutException` raw — and the screens did
+  /// `_error = e.toString()`, so the user saw "ClientException with
+  /// SocketException: Failed host lookup: 'api.tothanhthuy.cloud' …".
+  Future<http.Response> _safePost(
+    String path, {
+    required Map<String, dynamic> body,
+    Duration timeout = const Duration(seconds: 15),
+    Map<String, String>? headers,
+  }) async {
+    try {
+      return await http
+          .post(
+            Uri.parse('$_baseUrl$path'),
+            headers: {
+              'Content-Type': 'application/json',
+              ...?headers,
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
+    } catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Parses a 2xx auth response, persists tokens + user, returns true.
+  /// Returns false (without throwing) when the response shape is unexpected
+  /// — the controller already verified status==200 before calling this.
+  Future<bool> _ingestSession(http.Response r) async {
     try {
       final body = jsonDecode(r.body) as Map<String, dynamic>;
-      final err = body['error'] as Map<String, dynamic>?;
-      return Exception(err?['message'] ?? 'HTTP ${r.statusCode}');
+      final data = body['data'] as Map<String, dynamic>;
+      await _persistTokens(
+        access: data['accessToken'] as String,
+        refresh: data['refreshToken'] as String,
+        user: AuthUser.fromJson(data['user'] as Map<String, dynamic>),
+      );
+      return true;
     } catch (_) {
-      return Exception('HTTP ${r.statusCode}');
+      return false;
     }
   }
 }
