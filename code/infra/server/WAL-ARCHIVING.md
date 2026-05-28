@@ -39,21 +39,44 @@ docker exec hnag-postgres which pgbackrest 2>/dev/null || \
 sudo apt install -y rclone
 rclone config create hnag-b2 b2 \
   account=<B2_KEY_ID> \
-  key=<B2_APP_KEY>
+  key=<B2_APP_KEY> \
+  hard_delete=true
 
-# 3. Initial base backup
-/opt/docker/hnag/wal-restore.sh init
+# 3. Initial base backup + cron install
+/opt/docker/hnag/wal-archive.sh init
+
+# 4. Drop the cron file shown by `init` into /etc/cron.d/hnag-wal-archive
+#    (the entries MUST run as root — see "Daily base backup" section).
 ```
 
 ## Operations
 
 ### Daily base backup
 
-Runs automatically via cron (added to `/etc/cron.d/hnag-maintenance`):
+Runs automatically via cron at `/etc/cron.d/hnag-wal-archive`. **Must run as
+root** — the postgres WAL volume (`/var/lib/docker/volumes/hnag_pg_wal_archive`)
+is owned by root inside docker and the script needs to read it directly:
 
 ```
-0 2 * * * huy /opt/docker/hnag/wal-archive.sh base
-*/1 * * * * huy /opt/docker/hnag/wal-archive.sh push-current
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RCLONE_CONFIG=/home/huy/.config/rclone/rclone.conf
+MAILTO=""
+
+*/1 * * * * root /opt/docker/hnag/wal-archive.sh push-current >> /opt/docker/hnag/logs/wal-push.log 2>&1
+0 2 * * * root /opt/docker/hnag/wal-archive.sh base >> /opt/docker/hnag/logs/wal-base.log 2>&1
+```
+
+### Postgres archive_command pre-flight
+
+`archive_mode=on` + `archive_command` must be set in `postgresql.conf` (we
+bake this into the postgres init scripts). If you ever see `failed_count`
+in `pg_stat_archiver` climbing, the most common cause is the bind-mounted
+archive dir is root-owned but postgres runs as user `postgres`. Fix once:
+
+```bash
+docker exec -u root hnag-postgres chown postgres:postgres /var/lib/postgresql/wal_archive
+docker exec hnag-postgres psql -U hnag -d hnag -c "SELECT pg_stat_reset_shared('archiver');"
 ```
 
 ### Restore to a point in time

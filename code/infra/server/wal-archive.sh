@@ -57,10 +57,16 @@ case "$cmd" in
     rclone mkdir "${REMOTE}:${BUCKET}/wal"  2>&1 | tail -3 || true
     log "Initial base backup..."
     "$0" base
-    log "Configured. Add cron entries to /etc/cron.d/hnag-maintenance:"
+    log "Configured. Add cron entries to /etc/cron.d/hnag-wal-archive (MUST run as root —"
+    log "the WAL volume at /var/lib/docker/volumes/* is root:root and unreadable to non-root):"
     cat <<CRON
-0 2 * * * huy /opt/docker/hnag/wal-archive.sh base >> /opt/docker/hnag/logs/wal-base.log 2>&1
-*/1 * * * * huy /opt/docker/hnag/wal-archive.sh push-current >> /opt/docker/hnag/logs/wal-push.log 2>&1
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RCLONE_CONFIG=/home/huy/.config/rclone/rclone.conf
+MAILTO=""
+
+*/1 * * * * root /opt/docker/hnag/wal-archive.sh push-current >> /opt/docker/hnag/logs/wal-push.log 2>&1
+0 2 * * * root /opt/docker/hnag/wal-archive.sh base >> /opt/docker/hnag/logs/wal-base.log 2>&1
 CRON
     ;;
 
@@ -74,12 +80,19 @@ CRON
     # pg_basebackup writes a tar stream. We pipe through gzip + tee to file.
     # The `-X stream` flag includes the WAL segments needed to start the
     # restore. Postgres remains online.
+    # `-X fetch` (not stream) is required when piping tar to stdout — postgres
+    # refuses `-X stream` + `-Ft` + stdout combination ("cannot stream
+    # write-ahead logs in tar mode to stdout"). fetch is fine at our scale
+    # because WAL won't recycle in the seconds the backup takes.
     docker exec "$PG_CONTAINER" pg_basebackup \
-      -U hnag -D - -Ft -z -X stream -P 2>&1 | gzip -c > "$OUT"
+      -U hnag -D - -Ft -z -X fetch -P 2>&1 | gzip -c > "$OUT"
     SIZE=$(du -h "$OUT" | cut -f1)
     log "Base size: $SIZE — uploading to B2"
+    # `--b2-versions` is a *download* flag (it makes hidden versions visible);
+    # using it on `copy` errors out with "can't modify or delete files in
+    # --b2-versions mode". We just want the latest upload — drop the flag.
     rclone copy "$OUT" "${REMOTE}:${BUCKET}/base/" \
-      --b2-versions --transfers=4 --stats-one-line 2>&1 | tail -5
+      --transfers=4 --stats-one-line 2>&1 | tail -5
     # Local retention: keep 3 most recent (B2 handles long-term)
     ls -t "$LOCAL_BASE_DIR"/base-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -v
     log "✓ Base backup ${STAMP} complete"
