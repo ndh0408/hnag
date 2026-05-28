@@ -74,8 +74,6 @@ DEST="${REMOTE}:${BUCKET}/postgres/daily"
 log "Syncing → ${DEST}"
 rclone sync "$LOCAL_DUMP_DIR" "${DEST}" \
   --transfers=4 \
-  --b2-versions \
-  --b2-hard-delete=false \
   --log-level INFO \
   --stats=15s \
   --stats-one-line 2>&1 | tail -20
