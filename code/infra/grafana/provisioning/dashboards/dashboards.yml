@@ -1,0 +1,14 @@
+# Auto-load every *.json dashboard from /var/lib/grafana/dashboards on boot,
+# so adding a new dashboard is just `git pull` + grafana restart.
+apiVersion: 1
+
+providers:
+  - name: hnag
+    orgId: 1
+    folder: HNAG
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

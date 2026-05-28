@@ -1,0 +1,24 @@
+# =============================================================================
+# Prometheus scrape config for HNAG.
+# Mounted into the prom container at /etc/prometheus/prometheus.yml.
+# =============================================================================
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: hnag-prod
+    region: vn
+
+scrape_configs:
+  # Backend Node process — process + DB + Redis + queue + AI spend
+  - job_name: hnag-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['hnag-backend:4000']
+        labels:
+          service: backend
+
+  # Prometheus self-scrape (useful to alert if Prom itself is degraded)
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
