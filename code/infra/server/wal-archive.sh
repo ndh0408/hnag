@@ -105,6 +105,12 @@ CRON
     #
     # The volume mount in docker-compose.prod.yml is `pg_wal_archive:/var/lib/postgresql/wal_archive`.
     # We rsync from the docker volume mount on the host.
+    #
+    # flock prevents cron-tick stacking — a backfill or slow B2 upload can
+    # take >1 minute, and we do not want N parallel rclones contending for
+    # bandwidth + B2 API quota. -n = exit immediately if already running.
+    exec 9>/var/lock/hnag-wal-push.lock
+    flock -n 9 || { log "another push-current already running — skipping tick"; exit 0; }
     require rclone
     verify_remote
     VOLUME_PATH=$(docker volume inspect hnag_pg_wal_archive --format '{{ .Mountpoint }}' 2>/dev/null || echo "")
