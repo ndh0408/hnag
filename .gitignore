@@ -142,3 +142,7 @@ code/ingestion/out/
 *.osm.pbf
 # Built APK binaries (distribute via GitHub Releases / server, not git)
 *.apk
+
+# --- added during repo hygiene pass ---
+.claude/
+scripts/mcp_test_shots/

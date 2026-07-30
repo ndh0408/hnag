@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Setup DNS records for tothanhthuy.cloud → ServerLinux (100.100.210.85 / public IP)
+# Setup DNS records for tothanhthuy.cloud → ServerLinux (TAILNET_HOST / public IP)
 #
 # Usage:
 #   export CF_API_TOKEN='your-token-here'

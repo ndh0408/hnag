@@ -7,7 +7,7 @@ Mac VM (`vm` SSH alias) yêu cầu **GUI Terminal context** để unlock keychai
 ## Cách làm
 
 ### 1. Mở GUI Terminal trên Mac VM
-- Mở **Screen Sharing** (macOS Built-in) hoặc **VNC** vào VM `100.98.136.38`
+- Mở **Screen Sharing** (macOS Built-in) hoặc **VNC** vào VM `TAILNET_HOST`
 - Đăng nhập user `ndh0408`
 - Mở Terminal app (Spotlight → "Terminal")
 

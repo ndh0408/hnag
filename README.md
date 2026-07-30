@@ -1,18 +1,39 @@
-# 🍜 Hôm Nay Ăn Gì? — Series A Pitch Document
+# Hôm Nay Ăn Gì? (HNAG)
 
-> **Tagline:** *"The AI that decides what 100 triệu người Việt eat — every single day."*
+A food-decision app for Vietnam: tell it your mood, budget, time and what's in
+your fridge, and it decides what you eat — then shows you where to get it on a
+map of **14,319 real restaurants**. Flutter client, NestJS API, PostgreSQL +
+PostGIS, self-hosted behind Cloudflare Tunnel.
 
-**Một dòng tóm tắt:** Hôm Nay Ăn Gì? (HNAG) là siêu ứng dụng food-decision AI-first đầu tiên dành cho người Việt — kết hợp gợi ý món ăn cá nhân hóa (AI), mạng xã hội ẩm thực, marketplace quán ăn và meal planner sức khỏe trong một trải nghiệm duy nhất.
+> *Side project. Built solo — backend, mobile, data ingestion, infra and the
+> CI/CD that ships it to both a Linux server and a real iPhone.*
 
-> **Positioning V2:** *"TikTok + Google Maps + Tinder + GrabFood — cho mọi quyết định ăn uống."*
->
-> Đây không phải app đặt đồ ăn. Đây là **AI Food Discovery + Social Food Entertainment platform** — nơi bạn mở mỗi ngày **dù chưa đói**, lướt món ăn như lướt TikTok, và addicted với food discovery.
+**What's actually interesting here, engineering-wise:**
+
+- **Real data, not seeds** — 14,319 restaurants scraped from OpenStreetMap
+  Overpass across 63 provinces, normalised to 62 administrative units, with
+  PostGIS geo points for `nearby` queries; 86 Vietnamese dishes with
+  properly-licensed images from Wikidata/Wikimedia. Dedup via `rapidfuzz`.
+- **Two deploy targets from one pipeline** — GitHub Actions SSHes over a
+  private tailnet to a Linux box (docker-compose) *and* to a macOS machine
+  that builds and signs the iOS app with Fastlane.
+- **No exposed ports** — everything public goes through Cloudflare Tunnel;
+  the origin has no inbound rules at all.
+- **~30 screens wired to a live API** — no mocked screens; audited on a real
+  Android device and a real iPhone.
+
+<p align="center">
+  <img src="release/v2-home.png" width="24%" alt="Home">
+  <img src="release/v2-ai.png" width="24%" alt="AI Decide">
+  <img src="release/v2-mood.png" width="24%" alt="Mood">
+  <img src="release/v2-wheel.png" width="24%" alt="Random wheel">
+</p>
 
 ---
 
 ## 🚀 Live status (2026-05-27)
 
-**Deployment:** Self-host trên `ServerLinux` (Tailscale `100.100.210.85`) chạy chung với realm-* + Palworld trong cùng Docker stack riêng (network `hnag-internal`). Public access qua **Cloudflare Tunnel** (4 connections HKG region) — không expose port nào.
+**Deployment:** Self-host trên `ServerLinux` (reached over a private Tailscale tailnet) chạy chung với realm-* + Palworld trong cùng Docker stack riêng (network `hnag-internal`). Public access qua **Cloudflare Tunnel** (4 connections HKG region) — không expose port nào.
 
 | URL | Service | Status |
 |---|---|---|
@@ -97,64 +118,31 @@
 
 ---
 
-## 📊 Snapshot
+---
 
-| | |
+## The problem it solves
+
+Deciding what to eat is a *decision* problem, not a *search* problem. Existing
+apps assume you already know what you want: you open Grab or Shopee, type a
+dish name, and order it. HNAG inverts that — it takes your context (mood,
+budget, weather, time of day, who you're eating with, what's in your fridge)
+and produces a decision, then routes you to the cheapest way to act on it:
+cook it, order it, go there, or vote on it with friends.
+
+**Six decision engines:**
+
+| Engine | What it does |
 |---|---|
-| **Stage** | Series A — gọi vốn **$8M USD** |
-| **Định giá pre-money** | $32M USD |
-| **Thị trường VN (TAM)** | $42B USD (food & delivery) |
-| **SAM** | $6.8B (urban, 18–45 tuổi, smartphone) |
-| **SOM Year 3** | $180M (2.5% SAM) |
-| **Target Year 1** | 1.2M MAU |
-| **Target Year 3** | 12M MAU, $48M ARR |
-| **Core innovation** | AI Decision Engine + Social Food Graph |
+| Food Recommender | Context-aware ranking over weather, mood, budget, time of day |
+| Fridge Scan | Vision model reads ingredients from a photo → suggests dishes |
+| Mood Food | Emotion → menu mapping (lonely → congee, stressed → sweets) |
+| Group Decision | Realtime group voting with AI consensus tie-breaking |
+| Meal Planner | 7-day plan with calorie + budget tracking |
+| Voice Assistant | Vietnamese NLU — *"Hey Hà, hôm nay ăn gì?"* |
 
----
-
-## 🎯 Vấn đề (Problem)
-
-Mỗi ngày, **người Việt mất trung bình 23 phút** để quyết định "Hôm nay ăn gì?". Đó là:
-
-1. **Decision fatigue** — 67% Gen Z khảo sát nói họ "lười suy nghĩ" về món ăn
-2. **Phân mảnh** — phải mở 4–5 app (Grab, Shopee, Be, TikTok, Google Maps) để quyết định
-3. **Thiếu cá nhân hóa** — không app nào hiểu *bạn* (mood, ngân sách, sức khỏe, người đi cùng)
-4. **Lãng phí thực phẩm** — 35% nguyên liệu trong tủ lạnh bị bỏ phí vì không biết nấu gì
-5. **Social FOMO** — muốn ăn theo trend nhưng không biết chỗ uy tín
-
-> **Insight:** Đây không phải vấn đề về "tìm món" — đây là vấn đề **"quyết định"**.
-
----
-
-## 💡 Giải pháp (Solution)
-
-**HNAG là AI Decision Layer** ngồi trên toàn bộ hệ sinh thái food của Việt Nam:
-
-```
-┌───────────────────────────────────────────────────────────┐
-│   HÔM NAY ĂN GÌ? — AI Decision Engine                     │
-│                                                            │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
-│   │   Mood   │  │  Budget  │  │  Health  │  │ Weather  │ │
-│   └──────────┘  └──────────┘  └──────────┘  └──────────┘ │
-│         ↓            ↓            ↓             ↓         │
-│   ╔══════════════════════════════════════════════════╗   │
-│   ║         Personalized Food Recommendation          ║   │
-│   ╚══════════════════════════════════════════════════╝   │
-│         ↓            ↓            ↓             ↓         │
-│   [ Tự nấu ]  [ Đặt giao ]  [ Đi ăn ]  [ Ăn cùng nhóm ] │
-└───────────────────────────────────────────────────────────┘
-        ↓             ↓              ↓             ↓
-   Recipe DB    GrabFood/Shopee   Maps+Booking   Group Voting
-```
-
-**6 AI Engines:**
-1. 🧠 **Food Recommender** — Context-aware (thời tiết, mood, ngân sách, thời gian)
-2. 📸 **Fridge Scan** — Vision AI nhận diện nguyên liệu → gợi ý món
-3. 💖 **Mood Food** — Emotion-driven menu (cô đơn → cháo, stress → đồ ngọt)
-4. 👯 **Group Decision** — Realtime voting + AI consensus
-5. 🥗 **Meal Planner** — Lịch ăn 7 ngày, tracking calo/budget
-6. 🎤 **Voice Assistant** — "Hey Hà, hôm nay ăn gì?" (Vietnamese NLU)
+Currently GPT-4o-mini backs the language paths with a deterministic heuristic
+engine as fallback, so the app degrades gracefully instead of failing when the
+model or the API key is unavailable.
 
 ---
 
@@ -208,9 +196,9 @@ Mỗi ngày, **người Việt mất trung bình 23 phút** để quyết địn
 
 | Component | Target | Method |
 |---|---|---|
-| Backend + DB + Cache | `ServerLinux` (`100.100.210.85`, Tailscale) | docker-compose, SSH-deploy from GitHub Actions |
+| Backend + DB + Cache | `ServerLinux` (private tailnet) | docker-compose, SSH-deploy from GitHub Actions |
 | Owner Dashboard | Same server | docker-compose, deployed alongside backend |
-| iOS app (TestFlight) | `vm` (`100.98.136.38`, macOS, Tailscale) | Fastlane via SSH from GitHub Actions |
+| iOS app (TestFlight) | `vm` (`tailnet host`, macOS, Tailscale) | Fastlane via SSH from GitHub Actions |
 | Android app | GitHub Actions runner | Build → Firebase App Distribution |
 | Domain & TLS | `tothanhthuy.cloud` | DNS API + Let's Encrypt (certbot auto-renew 12h) |
 | Data ingestion | Same server (or separate VM) | Airflow `docker compose` |
@@ -232,48 +220,23 @@ Mỗi ngày, **người Việt mất trung bình 23 phút** để quyết địn
 
 ---
 
-## 💰 Why now? (Timing)
+---
 
-1. **AI cost giảm 90%** trong 18 tháng — GPT-4o-mini đủ rẻ để cá nhân hóa cho 10M+ users
-2. **Việt Nam đứng top 3 châu Á** về food content TikTok engagement
-3. **Online food delivery VN** tăng trưởng 22% CAGR đến 2028
-4. **Gen Z (24M người VN)** trưởng thành — họ *expect* AI assistants
-5. **GrabFood/Shopee saturation** — họ là rails, không phải decision layer
+## Product & business docs
+
+This started as an exercise in speccing a product end to end, so the repo also
+carries the non-engineering artefacts: [`docs/`](docs/) holds 16 design,
+technical and growth documents, and [`pitch/PITCH_DECK.md`](pitch/PITCH_DECK.md)
+is a 15-slide fundraising deck written as part of that exercise. **These are
+speculative planning documents** — market sizing, roadmap and org charts in
+them are illustrative, not commitments or claims about a real company.
+
+## Status
+
+Side project, actively iterated rather than launched. The backend, dashboard and
+marketing site run on my own hardware; the mobile app is installed on physical
+devices, not published to the App Store or Play Store.
 
 ---
 
-## 👥 Team (placeholder)
-
-- **CEO** — Ex-Grab/Shopee, 10+ năm consumer apps
-- **CTO** — Ex-Google AI, PhD ML
-- **CPO** — Ex-TikTok Creator Studio
-- **Head of Growth** — Scaled Momo từ 5M → 25M users
-- **Head of AI** — Ex-VinAI, food computer vision specialist
-
----
-
-## 🚀 Use of funds ($8M)
-
-```
-Engineering (40%)     ████████████████ $3.2M  → 25 engineers, AI infra
-Marketing (30%)       ████████████ $2.4M      → TikTok-first, KOL/KOC
-Operations (15%)      ██████ $1.2M            → BD restaurants, content ops
-Data & AI (10%)       ████ $0.8M              → Vision dataset VN, GPU
-Reserve (5%)          ██ $0.4M
-```
-
-**Runway:** 24 tháng → đạt $4M MRR, ready for Series B.
-
----
-
-## 📞 Contact
-
-**Founder:** [Your Name]
-**Email:** ndh0408@gmail.com
-**Web:** homnayan.gi
-**Deck:** [link to deck]
-**Demo:** [video URL]
-
----
-
-*"In Vietnam, food isn't fuel. It's identity, ritual, and conversation. We're building the AI that respects that."*
+**Author:** Nguyễn Đức Huy · [github.com/ndh0408](https://github.com/ndh0408) · huy04082000@gmail.com

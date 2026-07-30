@@ -63,7 +63,7 @@ APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 EOF
 
-# 7. Tailscale (recommended — server is already on 100.100.210.85)
+# 7. Tailscale (recommended — server is already on TAILNET_HOST)
 if ! command -v tailscale >/dev/null 2>&1; then
   log "Installing Tailscale..."
   curl -fsSL https://tailscale.com/install.sh | sh

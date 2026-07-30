@@ -1,6 +1,6 @@
 # =============================================================================
 # HNAG — Fastlane for iOS builds
-# Run on macOS VM (SSH alias `vm` @ 100.98.136.38).
+# Run on macOS VM (SSH alias `vm` @ TAILNET_HOST).
 # =============================================================================
 default_platform(:ios)
 

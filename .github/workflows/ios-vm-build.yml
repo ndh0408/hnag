@@ -45,7 +45,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           cat >> ~/.ssh/config <<EOF
           Host vm
-            HostName 100.98.136.38
+            HostName TAILNET_HOST
             User ndh0408
             IdentityFile ~/.ssh/id_ed25519
             StrictHostKeyChecking no

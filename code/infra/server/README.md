@@ -1,7 +1,7 @@
 # HNAG Self-hosted Deployment
 
 > Production stack chạy trên 1 Linux server (Ubuntu 22.04+) qua Docker Compose.
-> Target: **ServerLinux** (`100.100.210.85` Tailscale, user `huy`).
+> Target: **ServerLinux** (`TAILNET_HOST` Tailscale, user `huy`).
 >
 > Đây là path Series-A pre-launch — rẻ + đủ scale cho 100K MAU. Chuyển lên Kubernetes/AWS sau khi đạt traction.
 

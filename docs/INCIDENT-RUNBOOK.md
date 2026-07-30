@@ -5,7 +5,7 @@
 > [ARCHITECTURE.md](ARCHITECTURE.md) for system context.
 
 Production lives on a single host (memory `hnag-deploy-server`):
-`ServerLinux` (Tailscale `100.100.210.85`, user `huy`). SSH via the
+`ServerLinux` (Tailscale `TAILNET_HOST`, user `huy`). SSH via the
 alias `ServerLinux`. Cloudflare tunnel fronts `api.tothanhthuy.cloud`.
 
 ---

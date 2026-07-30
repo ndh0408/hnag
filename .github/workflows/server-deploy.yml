@@ -1,5 +1,5 @@
 # =============================================================================
-# Deploy HNAG backend to self-hosted server (ServerLinux @ 100.100.210.85)
+# Deploy HNAG backend to self-hosted server (ServerLinux @ TAILNET_HOST)
 # Triggered after backend-ci succeeds on main.
 # =============================================================================
 name: Server · Deploy
@@ -46,7 +46,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           cat >> ~/.ssh/config <<EOF
           Host ServerLinux
-            HostName 100.100.210.85
+            HostName TAILNET_HOST
             User huy
             IdentityFile ~/.ssh/id_ed25519
             StrictHostKeyChecking no
